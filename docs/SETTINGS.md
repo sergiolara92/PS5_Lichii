@@ -137,8 +137,14 @@ Without the file, the three settings are greyed out and say **Unavailable**.
 | Setting | What it does |
 |---|---|
 | Frame generation | On or off |
-| Frame gen target | The rate to reach: as many pictures are added as it takes. **60 Hz** suits a 30 FPS game on the usual output; more than 60 needs **Refresh rate** at 120 Hz and a display that shows it. **Auto** leaves it to the multiplier |
-| Frame gen multiplier | With the target on Auto: 2x, 3x or 4x the game's own pictures |
+| Frame gen target | The rate to reach: as many pictures are added as it takes. **60 Hz** suits a 30 FPS game on the usual output; more than 60 needs **Refresh rate** at 120 Hz and a display that shows it. **Auto** with a **Frame rate limit** set is the output's own rate (a game held at 30 FPS: 60 at 60 Hz, 120 at 120 Hz); Auto without a limit leaves it to the multiplier |
+| Frame gen multiplier | With the target on Auto and no frame rate limit: 2x, 3x or 4x the game's own pictures |
+
+### Frame rate limit
+
+**Frame rate limit** in **Settings > Video**, and in each game's settings: **Off**, **30 FPS**, **40 FPS** or **60 FPS**. The game's own pictures are paced to at most that rate, each one a whole number of the display's refreshes, so frame generation always multiplies the same steady base instead of a rate that swings with the scene. With it, leave **Frame gen target** on **Auto**: 30 FPS then becomes 60 at 60 Hz and 120 at 120 Hz. **40 FPS** is meant for the 120 Hz output (three refreshes a picture, 120 with frame generation).
+
+A game whose pictures follow the time (most Switch 2 games, Ocarina of Time with its built-in Dynamic FPS) keeps its speed under the limit. A game timed by its pictures runs slower when the limit is below the rate it would reach.
 
 A game that already fills the output, such as one at 60 FPS on the 60 Hz output, gains nothing from it. When it does not run, the log of the session says why, in the lines that start with `framegen:`.
 

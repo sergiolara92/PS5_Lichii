@@ -139,6 +139,7 @@ build goes into keeping that headroom, without stalling the game:
 - Vulkan on [PS5 Mesa](https://github.com/mihawk-99/PS5_Mesa) (RADV with a PS5 winsys)
 - ASTC kept compressed as BC formats
 - **MihawkGen** frame generation (30 → 60 fps), off by default
+- **Frame rate limit** (30 / 40 / 60 FPS): a steady base, and frame generation's **Auto** target fills the output (30 → 120 at 120 Hz)
 - Fast GPU accuracy on by default
 
 </td><td valign="top">

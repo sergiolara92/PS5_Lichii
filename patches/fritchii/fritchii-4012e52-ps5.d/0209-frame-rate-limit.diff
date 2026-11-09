@@ -1,0 +1,34 @@
+Frame rate limit (PS5 frontend, Settings > Video): the Switch 2 present pacer waits at least the limit's
+period between a game's frames, so frame generation always multiplies the same base.
+
+diff --color -ru a/src/core/hle/service/nx2_gsv.h b/src/core/hle/service/nx2_gsv.h
+--- a/src/core/hle/service/nx2_gsv.h
++++ b/src/core/hle/service/nx2_gsv.h
+@@ -1982,6 +1982,13 @@
+         }
+         auto interval = std::chrono::nanoseconds{
+             100'000'000'000LL * swap_interval / refresh_rate / Settings::SpeedLimit()};
++        // The frontend's frame rate limit: never shorter than its period. The genlock below then
++        // makes it a whole number of display refreshes (30 FPS: four at 120 Hz).
++        if (const unsigned limit =
++                VideoCommon::Nx2Perf::g_frame_limit_fps.load(std::memory_order_relaxed);
++            limit > 0) {
++            interval = (std::max)(interval, std::chrono::nanoseconds{1'000'000'000LL / limit});
++        }
+         // Genlock: with the host frame pacer on, a frame period within 1% of a whole number of
+         // display refreshes becomes exactly that many measured refreshes (a "120 Hz" display at
+         // 119.98 Hz: 33.3389 ms instead of 33.3333). On the game's own clock its frames drifted
+diff --color -ru a/src/video_core/nx2_perf.h b/src/video_core/nx2_perf.h
+--- a/src/video_core/nx2_perf.h
++++ b/src/video_core/nx2_perf.h
+@@ -119,6 +119,10 @@
+ /// unknown or unpaced. The host frame pacer (vk_host_pacer.h) never holds frames longer.
+ inline std::atomic<long long> g_guest_frame_interval_ns{0};
+ 
++/// The PS5 frontend's frame rate limit (Settings > Video > Frame rate limit), 0 for none: a game's
++/// frames are paced at most this many a second, so frame generation multiplies a steady base.
++inline std::atomic<unsigned> g_frame_limit_fps{0};
++
+ /// The display's measured refresh period while the host frame pacer runs, else 0. The game's
+ /// present pacing (nx2_gsv.h) times its frames to whole multiples of it (genlock).
+ inline std::atomic<long long> g_host_refresh_ns{0};

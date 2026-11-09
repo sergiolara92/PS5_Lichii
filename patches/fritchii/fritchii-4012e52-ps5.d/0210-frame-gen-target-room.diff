@@ -1,0 +1,17 @@
+Frame generation with a target rate may add up to six frames a game frame (the presenter holds seven), so the
+target is held while the game's own rate falls below its limit.
+
+diff --color -ru a/src/common/settings.cpp b/src/common/settings.cpp
+--- a/src/common/settings.cpp
++++ b/src/common/settings.cpp
+@@ -420,7 +420,9 @@
+         return 0;
+     }
+     if (values.frame_gen_target_rate.GetValue() != 0) {
+-        return MAX_FRAME_GEN_MULTIPLIER - 1;
++        // A target rate is held while the game's own rate falls (24 FPS to 120: four generated
++        // frames a game frame), up to the presenter's frames in flight (seven).
++        return 6;
+     }
+     return FrameGenMultiplier() - 1;
+ }

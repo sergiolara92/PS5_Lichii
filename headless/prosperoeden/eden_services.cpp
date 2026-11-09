@@ -983,6 +983,7 @@ pe::ui::GameSettings EdenServices::game_settings(std::uint64_t title_id) {
     result.filter = saved.upscaling_filter;
     result.astc = saved.astc_textures;
     result.refresh = saved.refresh;
+    result.frame_limit = saved.frame_limit;
     result.hud = saved.hud;
     result.hud_size = saved.hud_size;
     result.hud_corner = saved.hud_corner;
@@ -1012,6 +1013,7 @@ bool EdenServices::set_game_settings(std::uint64_t title_id, const pe::ui::GameS
     value.upscaling_filter = settings.filter;
     value.astc_textures = settings.astc;
     value.refresh = settings.refresh;
+    value.frame_limit = settings.frame_limit;
     value.hud = settings.hud;
     value.hud_size = settings.hud_size;
     value.hud_corner = settings.hud_corner;
@@ -1055,6 +1057,7 @@ pe::ui::Preferences EdenServices::preferences() {
     result.filter = saved.upscaling_filter;
     result.astc = saved.astc_textures;
     result.refresh = saved.refresh;
+    result.frame_limit = saved.frame_limit;
     result.output = saved.output;
     result.frame_gen = saved.frame_gen;
     result.frame_gen_method = saved.frame_gen_method;
@@ -1106,6 +1109,7 @@ bool EdenServices::set_preferences(const pe::ui::Preferences& preferences) {
     value.upscaling_filter = preferences.filter;
     value.astc_textures = preferences.astc;
     value.refresh = preferences.refresh;
+    value.frame_limit = preferences.frame_limit;
     value.output = preferences.output;
     value.frame_gen = preferences.frame_gen;
     value.frame_gen_method = preferences.frame_gen_method;

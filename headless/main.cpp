@@ -72,11 +72,16 @@ namespace {
 [[maybe_unused]] bool UsesSwitch2Route(const std::string& path) {
     if (Eden::IsFolderGameEntry(path) || Eden::IsNupFile(path)) return true;
     if (!Eden::HasExtension(path, ".xci") && !Eden::HasExtension(path, ".nsp")) return false;
+#ifdef PS5_NATIVE
     return (eden_game_title_id(path.c_str()) >> 56) == 0x04;
+#else
+    return false;  // the PC build has no metadata bridge: a Switch 2 .xci/.nsp takes a .eden file there
+#endif
 }
 } // namespace
 #ifdef EDEN_PS5_OPENGL
 #include "graphics.h"
+#include "video_core/nx2_perf.h"  // the frame rate limit's pace (Settings > Video)
 #include "video_core/renderer_base.h"
 #include "video_core/rasterizer_interface.h"
 #else
@@ -1572,6 +1577,17 @@ int main(int argc, char** argv) {
                     at(video.frame_gen_multiplier, std::size(Eden::kFrameGenMultiplierValue));
                 int target = Eden::kFrameGenTargetHz[target_index];
                 int multiplier = Eden::kFrameGenMultiplierValue[multiplier_index];
+                // Frame rate limit: the game's frames are paced to it (nx2_gsv.h PaceToVblank). With a
+                // limit, Auto aims at the output's own rate: 30 FPS becomes 60 at 60 Hz and 120 at
+                // 120 Hz, with nothing to work out.
+                const int frame_limit =
+                    Eden::kFrameLimitFps[std::clamp(video.frame_limit, 0, int(std::size(Eden::kFrameLimitFps)) - 1)];
+                VideoCommon::Nx2Perf::g_frame_limit_fps.store(static_cast<unsigned>(frame_limit));
+                if (frame_limit > 0 && target_index == 0)
+                    target = Eden::kRefreshHz[std::clamp(video.refresh, 0, int(std::size(Eden::kRefreshHz)) - 1)];
+                Eden::Report("launch", frame_limit > 0
+                                           ? ("Frame rate limit: " + std::to_string(frame_limit) + " FPS").c_str()
+                                           : "Frame rate limit: off");
                 int override_rate = -1;
                 int override_multiplier = -1;
                 std::ifstream frame_gen_file(Eden::AppFile("framegen.txt"));

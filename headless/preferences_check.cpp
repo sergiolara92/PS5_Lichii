@@ -187,6 +187,30 @@ int main() {
     std::ofstream(unknown_refresh) << R"({"video": {"refresh_rate": "144"}})";
     assert(Eden::LoadPreferences(unknown_refresh).refresh == 0);
 
+    // Frame rate limit (Settings > Video): off unless 30, 40 or 60 FPS is chosen; other values are
+    // refused or read as off. A game's own limit goes before it.
+    video = Eden::LoadPreferences(file);
+    assert(video.frame_limit == 0 && Eden::kFrameLimitFps[video.frame_limit] == 0);
+    video.frame_limit = 1;
+    assert(Eden::SavePreferences(video, file));
+    assert(Eden::LoadPreferences(file).frame_limit == 1 && Eden::kFrameLimitFps[1] == 30);
+    assert(Read(file).find("\"frame_rate_limit\": \"30\"") != std::string::npos);
+    video.frame_limit = 4;
+    assert(!Eden::SavePreferences(video, file));
+    const std::string unknown_limit = std::string(directory) + "/unknown-limit.json";
+    std::ofstream(unknown_limit) << R"({"video": {"frame_rate_limit": "45"}})";
+    assert(Eden::LoadPreferences(unknown_limit).frame_limit == 0);
+    {
+        Eden::GameSettings limited;
+        limited.frame_limit = 2;  // 40 FPS for this game only
+        assert(Eden::SaveGameSettings(0x0100000000020000ULL, limited, file));
+        assert(Eden::PreferencesFor(0x0100000000020000ULL, file).frame_limit == 2);
+        assert(Eden::PreferencesFor(0x0100000000030000ULL, file).frame_limit == 1);
+        assert(Eden::SaveGameSettings(0x0100000000020000ULL, Eden::GameSettings{}, file));
+    }
+    video.frame_limit = 0;
+    assert(Eden::SavePreferences(video, file));
+
     // Output resolution (Settings > Video): 1080p unless another size is chosen; other values are
     // refused or read as 1080p.
     video = Eden::LoadPreferences(file);

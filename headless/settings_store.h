@@ -101,6 +101,12 @@ static_assert(std::size(kFrameGenMethodKeys) == std::size(kFrameGenMethodLabels)
 inline constexpr const char* kFrameGenTargetKeys[] = {"auto", "60", "90", "120", "144", "240"};
 inline constexpr int kFrameGenTargetHz[] = {0, 60, 90, 120, 144, 240};
 static_assert(std::size(kFrameGenTargetKeys) == std::size(kFrameGenTargetHz));
+// Settings > Video > Frame rate limit: the game's own frames are paced to at most this rate (0: as
+// the game asks), so frame generation always multiplies the same base. The pace is locked to the
+// output's refresh (40 FPS is three refreshes at 120 Hz).
+inline constexpr const char* kFrameLimitKeys[] = {"off", "30", "40", "60"};
+inline constexpr int kFrameLimitFps[] = {0, 30, 40, 60};
+static_assert(std::size(kFrameLimitKeys) == std::size(kFrameLimitFps));
 inline constexpr const char* kFrameGenMultiplierKeys[] = {"2", "3", "4"};
 inline constexpr int kFrameGenMultiplierValue[] = {2, 3, 4};
 static_assert(std::size(kFrameGenMultiplierKeys) == std::size(kFrameGenMultiplierValue));
@@ -178,6 +184,7 @@ struct Preferences {
     // Settings > Diagnostics > Update notices: off, the launcher keeps a newer release to itself at
     // its start (About still names it).
     bool update_notices = true;
+    int frame_limit = 0;    // Settings > Video > Frame rate limit: index into kFrameLimitKeys
 };
 
 inline int KeyIndex(const std::string& value, const char* const* keys, int count, int fallback) {
@@ -479,6 +486,8 @@ inline Preferences LoadPreferences(const std::string& file = SettingsFile()) {
     result.frame_gen_multiplier = KeyIndex(
         Settings::String(document, Json::json_pointer("/video/frame_gen_multiplier")),
         kFrameGenMultiplierKeys, int(std::size(kFrameGenMultiplierKeys)), result.frame_gen_multiplier);
+    result.frame_limit = KeyIndex(Settings::String(document, Json::json_pointer("/video/frame_rate_limit")),
+                                  kFrameLimitKeys, int(std::size(kFrameLimitKeys)), result.frame_limit);
     if (const auto preset = Settings::String(document, Json::json_pointer("/video/post_processing"));
         ValidPostProcessing(preset))
         result.post_processing = preset;
@@ -507,6 +516,7 @@ inline bool SavePreferences(const Preferences& value, const std::string& file = 
         value.upscaling_filter < 0 || value.upscaling_filter >= int(std::size(kUpscalingFilterKeys)) ||
         value.astc_textures < 0 || value.astc_textures >= int(std::size(kAstcTextureKeys)) ||
         value.refresh < 0 || value.refresh >= int(std::size(kRefreshKeys)) ||
+        value.frame_limit < 0 || value.frame_limit >= int(std::size(kFrameLimitKeys)) ||
         value.output < 0 || value.output >= int(std::size(kOutputKeys)) ||
         value.language < 0 || value.language >= int(std::size(kLanguageKeys)) ||
         value.hud_size < 0 || value.hud_size >= int(std::size(kHudSizeKeys)) ||
@@ -531,6 +541,7 @@ inline bool SavePreferences(const Preferences& value, const std::string& file = 
     document["video"]["frame_gen_method"] = kFrameGenMethodKeys[value.frame_gen_method];
     document["video"]["frame_gen_target"] = kFrameGenTargetKeys[value.frame_gen_target];
     document["video"]["frame_gen_multiplier"] = kFrameGenMultiplierKeys[value.frame_gen_multiplier];
+    document["video"]["frame_rate_limit"] = kFrameLimitKeys[value.frame_limit];
     if (value.post_processing.empty()) document["video"].erase("post_processing");
     else document["video"]["post_processing"] = value.post_processing;
     document["audio"]["volume"] = value.volume;
@@ -634,6 +645,7 @@ struct GameSettings {
     std::array<int, kPerformanceSwitches> performance{-1, -1, -1, -1, -1, -1, -1, -1};  // kPerformanceKeys
     int64_t rng_seed = -1;      // 0 to 4294967295, or -1: no seed (load_address.h)
     int speed_limit = -1;       // index into kSpeedLimitKeys ("performance" / "speed_limit")
+    int frame_limit = -1;       // index into kFrameLimitKeys ("video" / "frame_rate_limit")
 };
 // The seed a typed text names: digits and nothing else, 0 to 4294967295. -1 for any other text.
 inline int64_t RngSeedFromText(std::string_view text) {
@@ -674,6 +686,7 @@ inline GameSettings LoadGameSettings(uint64_t title_id, const std::string& file 
                                        int(std::size(kFrameGenMethodKeys)), -1);
     result.frame_gen_target = KeyIndex(key("frame_gen_target"), kFrameGenTargetKeys,
                                        int(std::size(kFrameGenTargetKeys)), -1);
+    result.frame_limit = KeyIndex(key("frame_rate_limit"), kFrameLimitKeys, int(std::size(kFrameLimitKeys)), -1);
     result.frame_gen_multiplier = KeyIndex(key("frame_gen_multiplier"), kFrameGenMultiplierKeys,
                                            int(std::size(kFrameGenMultiplierKeys)), -1);
     result.language = KeyIndex(key("language"), kLanguageKeys, int(std::size(kLanguageKeys)), -1);
@@ -717,6 +730,7 @@ inline bool SaveGameSettings(uint64_t title_id, const GameSettings& value, const
         value.frame_gen_method >= int(std::size(kFrameGenMethodKeys)) ||
         value.frame_gen_target >= int(std::size(kFrameGenTargetKeys)) ||
         value.frame_gen_multiplier >= int(std::size(kFrameGenMultiplierKeys)) ||
+        value.frame_limit >= int(std::size(kFrameLimitKeys)) ||
         value.volume > 100 || value.rng_seed < -1 || value.rng_seed > 0xffffffffLL ||
         value.hud_size >= int(std::size(kHudSizeKeys)) ||
         value.hud_corner >= int(std::size(kHudCornerKeys)) ||
@@ -745,6 +759,7 @@ inline bool SaveGameSettings(uint64_t title_id, const GameSettings& value, const
     store("frame_gen_method", value.frame_gen_method, kFrameGenMethodKeys);
     store("frame_gen_target", value.frame_gen_target, kFrameGenTargetKeys);
     store("frame_gen_multiplier", value.frame_gen_multiplier, kFrameGenMultiplierKeys);
+    store("frame_rate_limit", value.frame_limit, kFrameLimitKeys);
     if (value.post_processing) game["post_processing"] = *value.post_processing;
     else game.erase("post_processing");
     store("language", value.language, kLanguageKeys);
@@ -789,6 +804,7 @@ inline Preferences PreferencesFor(uint64_t title_id, const std::string& file = S
     if (game.frame_gen_method >= 0) result.frame_gen_method = game.frame_gen_method;
     if (game.frame_gen_target >= 0) result.frame_gen_target = game.frame_gen_target;
     if (game.frame_gen_multiplier >= 0) result.frame_gen_multiplier = game.frame_gen_multiplier;
+    if (game.frame_limit >= 0) result.frame_limit = game.frame_limit;
     if (game.post_processing) result.post_processing = *game.post_processing;
     if (game.volume >= 0) result.volume = game.volume;
     if (game.mute >= 0) result.mute = game.mute == 1;

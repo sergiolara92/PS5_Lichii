@@ -862,7 +862,7 @@ adapt('src/video_core/renderer_vulkan/renderer_vulkan.h',
     ('    void Composite(', '    void PresentLoading();\n    void Composite('),
     ('#ifdef HAS_LSFG\n#include "video_core/renderer_vulkan/present/frame_gen.h"\n#endif',
      '#ifdef HAS_LSFG\n#include "video_core/renderer_vulkan/present/frame_gen.h"\n#endif\n'
-     '#ifdef HAS_MIHAWKGEN\n#include "mihawkgen.h"\n#include "mihawkgen_bridge.h"\n#endif'),
+     '#ifdef HAS_MIHAWKGEN\n#include "mihawkgen.h"\n#include "mihawkgen_bridge.h"\n#include "video_core/nx2_perf.h"\n#endif'),
     ('#ifdef HAS_LSFG\n    FrameGen frame_gen;\n#endif',
      '#ifdef HAS_LSFG\n    FrameGen frame_gen;\n#endif\n'
      '#ifdef HAS_MIHAWKGEN\n    Eden::MihawkGen mihawkgen_;\n    bool mihawkgen_init_{};\n#endif'),

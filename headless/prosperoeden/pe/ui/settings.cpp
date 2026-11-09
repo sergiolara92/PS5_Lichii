@@ -67,6 +67,7 @@ enum VideoRow : int
     video_filter,
     video_astc,
     video_refresh,
+    video_frame_limit,     // the game's frames at most (Off, 30, 40, 60 FPS)
     video_overlay,         // the FPS overlay's own switch
     video_overlay_options, // opens the overlay's options (Modal::hud)
     video_post_processing, // one of Eden's ReShade FX presets, or off (Vulkan only)
@@ -100,6 +101,7 @@ enum HudRow : int
 constexpr int kFrameGenMethods = 2;     // Lossless Scaling, MihawkGen (settings_store.h)
 constexpr int kFrameGenTargets = 6;     // Auto, 60, 90, 120, 144, 240 Hz (settings_store.h)
 constexpr int kFrameGenMultipliers = 3; // 2x, 3x, 4x
+constexpr int kFrameLimits = 4;         // Off, 30, 40, 60 FPS (settings_store.h kFrameLimitKeys)
 constexpr int kHudSizes = 3;            // Regular, Medium, Large (settings_store.h, kHudSizeKeys)
 constexpr int kHudCorners = 4;          // kHudCornerNames, services.hpp
 constexpr int kHudRowsShown = 5;
@@ -162,6 +164,7 @@ constexpr int kSpeedLimits = static_cast<int>(std::size(kSpeedLimitPercents));
 
 constexpr const char *kFrameGenMethodNames[] = {"Lossless Scaling", "MihawkGen"};
 constexpr const char *kFrameGenTargetNames[] = {"", "60", "90", "120", "144", "240"};
+constexpr const char *kFrameLimitNames[] = {"", "30", "40", "60"};
 constexpr const char *kFrameGenMultiplierNames[] = {"2x", "3x", "4x"};
 
 const char *on_off(bool value)
@@ -767,6 +770,8 @@ void Launcher::press_dialog(Key key)
             prefs_.astc = prefs_.astc != 0 ? 0 : 1;
         else if (option_ == video_refresh)
             prefs_.refresh = prefs_.refresh != 0 ? 0 : 1;
+        else if (option_ == video_frame_limit)
+            prefs_.frame_limit = (std::clamp(prefs_.frame_limit, 0, kFrameLimits - 1) + step + kFrameLimits) % kFrameLimits;
         else if (option_ == video_post_processing)
         {
             // The shared presets only: a game's own are in its settings (Services::post_processing_shared).
@@ -1081,6 +1086,8 @@ void Launcher::draw_dialog(Canvas &c, Modal modal, float open)
             pick(services_.filter_labels(), prefs_.filter),
             pick(services_.astc_labels(), prefs_.astc),
             hertz(prefs_.refresh),
+            prefs_.frame_limit <= 0 ? std::string{tr("Off")} :
+                fill(tr("{0} FPS"), {kFrameLimitNames[std::clamp(prefs_.frame_limit, 1, kFrameLimits - 1)]}),
             std::string{}, // FPS overlay: a switch
             std::string{}, // Overlay options: an opener
             pick(services_.post_processing_labels(), prefs_.post_processing),
@@ -1097,6 +1104,7 @@ void Launcher::draw_dialog(Canvas &c, Modal modal, float open)
         static constexpr const char *kNames[kVideoRows] = {
             TR("Renderer"),         TR("Output resolution"), TR("Resolution"),
             TR("Upscaling filter"), TR("ASTC textures"),     TR("Refresh rate"),
+            TR("Frame rate limit"),
             TR("FPS overlay"),      TR("Overlay options"),   TR("Post-processing"),
             TR("Frame generation"), TR("Frame gen method"),  TR("Frame gen target"),  TR("Frame gen multiplier")};
         for (int row = first; row <= last; ++row)

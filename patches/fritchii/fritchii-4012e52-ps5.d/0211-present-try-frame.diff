@@ -1,0 +1,43 @@
+PresentManager::TryGetRenderFrame: a free frame without waiting for the present thread (nullptr when none is free
+beyond a reserve). Frame generation's extra frames use it, so the renderer never waits a refresh for one.
+
+diff --color -ru a/src/video_core/renderer_vulkan/vk_present_manager.cpp b/src/video_core/renderer_vulkan/vk_present_manager.cpp
+--- a/src/video_core/renderer_vulkan/vk_present_manager.cpp
++++ b/src/video_core/renderer_vulkan/vk_present_manager.cpp
+@@ -211,6 +211,22 @@
+     return frame;
+ }
+ 
++Frame* PresentManager::TryGetRenderFrame(size_t keep) {
++    Frame* frame = nullptr;
++    {
++        std::scoped_lock lock{free_mutex};
++        if (free_queue.size() <= keep) {
++            return nullptr;
++        }
++        frame = free_queue.front();
++        free_queue.pop_front();
++    }
++    // A frame in the free queue has been handed to the display; its resources free once that ends.
++    frame->present_done.Wait();
++    frame->present_done.Reset();
++    return frame;
++}
++
+ void PresentManager::Present(Frame* frame) {
+     if (use_present_thread) {
+         scheduler.Record([this, frame](vk::CommandBuffer) {
+diff --color -ru a/src/video_core/renderer_vulkan/vk_present_manager.h b/src/video_core/renderer_vulkan/vk_present_manager.h
+--- a/src/video_core/renderer_vulkan/vk_present_manager.h
++++ b/src/video_core/renderer_vulkan/vk_present_manager.h
+@@ -59,6 +59,10 @@
+ 
+     /// Returns the last used presentation frame
+     Frame* GetRenderFrame();
++    /// A free frame only if one is free beyond `keep` (left for the game's next frame), without
++    /// waiting for the present thread; nullptr otherwise. Frame generation's extra frames use it, so
++    /// the renderer never waits a display refresh for a made-up frame.
++    [[nodiscard]] Frame* TryGetRenderFrame(size_t keep);
+ 
+     /// Pushes a frame for presentation
+     void Present(Frame* frame);

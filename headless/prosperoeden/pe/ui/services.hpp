@@ -335,6 +335,7 @@ struct Preferences
     int filter = 0;
     int astc = 0; // ASTC textures: 0 kept compressed, 1 full quality (four times the memory)
     int refresh = 0; // the output while a game runs: 0 60 Hz, 1 120 Hz
+    int frame_limit = 0; // the game's frames at most: 0 off, 1 30, 2 40, 3 60 FPS (kFrameLimitKeys)
     int output = 0;  // the size of the picture, menu and games: 0 1080p, 1 1440p, 2 2160p
     // Lossless Scaling frame generation (Vulkan only): between a game's own frames, show
     // frames generated from them, up to the output's rate.
@@ -394,6 +395,7 @@ struct GameSettings
     int filter = -1;     // index into Services::filter_labels
     int astc = -1;       // index into Services::astc_labels
     int refresh = -1;    // 0 60 Hz, 1 120 Hz
+    int frame_limit = -1; // 0 off, 1 30, 2 40, 3 60 FPS
     int hud = -1;        // FPS overlay
     int hud_size = -1;   // the overlay's chip: 0 regular, 1 large
     int hud_corner = -1; // 0 top left, 1 top right, 2 bottom left, 3 bottom right
