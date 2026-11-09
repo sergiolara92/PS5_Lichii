@@ -3,12 +3,12 @@
   "items": [
     {
       "name": "fritchii",
-      "about": "Fritchii (Frizti, Eden-derived Switch 2 emulator, GPL-3.0) v5.3 at the pinned commit: the only source of the build",
+      "about": "Fritchii (Frizti, Eden-derived Switch 2 emulator, GPL-3.0) v5.5 at the pinned commit: the only source of the build",
       "kind": "archive",
-      "url": "https://github.com/Frizti/Fritchii/archive/1a7a3c03c5955c7e6a35b447dbd852a4c4a875b5.tar.gz",
-      "sha256": "61a1afb498ff783a160b105b210575a0c6f0b020e337b0b3c7da94947906b705",
-      "save": ".deps/fritchii-1a7a3c0.tar.gz",
-      "creates": ".deps/fritchii-1a7a3c0.tar.gz"
+      "url": "https://github.com/Frizti/Fritchii/archive/4012e5271e278b21cf8f56b97481dac2b777cd0d.tar.gz",
+      "sha256": "301d286639c9323103ce6556794b00217e2175499194cd0f1aeec16052a8fcc3",
+      "save": ".deps/fritchii-4012e52.tar.gz",
+      "creates": ".deps/fritchii-4012e52.tar.gz"
     },
     {
       "name": "ffmpeg",

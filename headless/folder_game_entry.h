@@ -17,6 +17,21 @@ inline bool IsFolderGameEntry(std::string_view path) {
     }
     return true;
 }
+// A file name ending (case ignored).
+inline bool HasExtension(std::string_view path, std::string_view extension) {
+    if (path.size() <= extension.size()) return false;
+    const auto tail = path.substr(path.size() - extension.size());
+    for (std::size_t i = 0; i < extension.size(); ++i) {
+        const auto c = static_cast<unsigned char>(tail[i]);
+        if ((c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c) != static_cast<unsigned char>(extension[i]))
+            return false;
+    }
+    return true;
+}
+// A Switch 2 NUP container: always a Switch 2 game, started like a .eden entry without one.
+inline bool IsNupFile(std::string_view path) {
+    return HasExtension(path, ".nup");
+}
 inline std::string LibraryGameKey(std::string_view path, std::string_view roms) {
     if (!roms.empty() && roms.back() == '/' && path.starts_with(roms))
         return std::string(path.substr(roms.size()));

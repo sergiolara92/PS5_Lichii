@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "research_descriptor.h"
 #include <array>
+#include <cctype>
 #include <fstream>
 #include <set>
 #include <stdexcept>
@@ -114,6 +115,15 @@ ResearchDescriptor ParseResearchDescriptor(const std::string& text) {
 }
 
 ResearchDescriptor ReadResearchDescriptor(const std::filesystem::path& file) {
+    // A Switch 2 game file itself (XCI, NSP or NUP) starts as a descriptor naming it would: no .eden
+    // file is needed for one. Its program decides the memory layout (NPDM) as in any descriptor.
+    std::string extension = file.extension().string();
+    for (char& c : extension) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (extension == ".xci" || extension == ".nsp" || extension == ".nup") {
+        Json entry{{"schema", 1}, {"enabled", true}, {"mode", "execute"}};
+        entry[extension.substr(1)] = std::filesystem::absolute(file).lexically_normal().string();
+        return ParseResearchDescriptor(entry.dump());
+    }
     std::error_code error;
     const bool exists = std::filesystem::exists(file, error);
     if (!exists && !error) { ResearchDescriptor result; result.state = DescriptorState::Absent; return result; }

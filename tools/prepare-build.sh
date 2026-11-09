@@ -27,9 +27,9 @@ eden="$scratch/source"
 # The pinned source (Frizti/Fritchii, tools/deps.json) and its complete pinned-to-final PS5 patch
 # (patches/fritchii; ours on top in <patch>.d). The patch is part of the tree's identity, so a
 # changed patch unpacks the archive again. EDEN_ARCHIVE/EDEN_COMMIT/EDEN_SOURCE_PATCH override them.
-eden_archive=${EDEN_ARCHIVE:-fritchii-1a7a3c0.tar.gz}
-eden_commit=${EDEN_COMMIT:-1a7a3c03c5955c7e6a35b447dbd852a4c4a875b5}
-EDEN_SOURCE_PATCH=${EDEN_SOURCE_PATCH:-$root/patches/fritchii/fritchii-1a7a3c0-ps5.patch}
+eden_archive=${EDEN_ARCHIVE:-fritchii-4012e52.tar.gz}
+eden_commit=${EDEN_COMMIT:-4012e5271e278b21cf8f56b97481dac2b777cd0d}
+EDEN_SOURCE_PATCH=${EDEN_SOURCE_PATCH:-$root/patches/fritchii/fritchii-4012e52-ps5.patch}
 eden_id="$eden_archive+$(basename "$EDEN_SOURCE_PATCH"):$(sha256sum < "$EDEN_SOURCE_PATCH" | cut -c1-12)"
 # A tree unpacked from another archive is the source of another Eden revision: it is unpacked
 # again (Eden's package cache, downloads only, is kept). A tree left from before an update of

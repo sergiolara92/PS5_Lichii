@@ -232,7 +232,7 @@ uint64_t eden_game_title_id(const char* rom_path) {
     std::transform(path.begin(), path.end(), path.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 #ifdef PROSPERO_DIRECT_RESEARCH
-    if (Eden::IsFolderGameEntry(path)) {
+    if (Eden::IsFolderGameEntry(path) || Eden::IsNupFile(path)) {
         try {
             const auto descriptor = Prospero::Development::ReadResearchDescriptor(rom_path);
             if (descriptor.state != Prospero::Development::DescriptorState::Ready) return 0;
@@ -280,7 +280,7 @@ int eden_extract_game_metadata(const char* rom_path, const char* keys_dir,
     if (!rom_path || !keys_dir || !cover_tga_path || !title || title_capacity == 0) return 0;
     title[0] = '\0';
 #ifdef PROSPERO_DIRECT_RESEARCH
-    if (Eden::IsFolderGameEntry(rom_path)) {
+    if (Eden::IsFolderGameEntry(rom_path) || Eden::IsNupFile(rom_path)) {
         try {
             const auto descriptor = Prospero::Development::ReadResearchDescriptor(rom_path);
             if (descriptor.state != Prospero::Development::DescriptorState::Ready) return 0;
@@ -318,7 +318,7 @@ int eden_extract_game_metadata(const char* rom_path, const char* keys_dir,
 uint32_t eden_game_supported_languages(const char* rom_path, const char* keys_dir) {
     if (!rom_path || !keys_dir) return 0;
     // Extracted entries have no supplied control NACP; do not parse JSON as an archive.
-    if (Eden::IsFolderGameEntry(rom_path)) return 0;
+    if (Eden::IsFolderGameEntry(rom_path) || Eden::IsNupFile(rom_path)) return 0;
     if (const auto known = GameLanguages().find(rom_path); known != GameLanguages().end()) return known->second;
     try {
         Common::FS::SetEdenPath(Common::FS::EdenPath::KeysDir, keys_dir);

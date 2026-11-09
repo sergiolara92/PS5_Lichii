@@ -89,9 +89,9 @@ Downloads are cached in `~/.cache/prosperoeden-deps` (`PROSPEROEDEN_DEPS_CACHE`)
 
 Inside this repository, in `.deps/`:
 
-- **Fritchii** v5.3 at commit `1a7a3c03c5955c7e6a35b447dbd852a4c4a875b5` (GitHub archive), an
+- **Fritchii** v5.5 at commit `4012e5271e278b21cf8f56b97481dac2b777cd0d` (GitHub archive), an
   Eden-derived Switch 2 emulator, with its own hash-pinned packages, which its configure step
-  downloads. `make prepare` applies `patches/fritchii/fritchii-1a7a3c0-ps5.patch` and then our
+  downloads. `make prepare` applies `patches/fritchii/fritchii-4012e52-ps5.patch` and then our
   changes in its `.d` folder (in name order, each applied once). The PS5 frontend in `headless/`
   replaces and derives sources at configure time (`headless/inject.cmake`).
 - **FFmpeg** at the commit Eden pins, built with only the decoders games use.

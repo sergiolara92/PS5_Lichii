@@ -2,6 +2,34 @@
 
 What changed in each release of ProsperoEden, newest first. A release's notes on GitHub are its section here.
 
+## v1.10.00
+
+Fritchii v5.5, our PS5 renderer work back in place, and Switch 2 games started from their own files, with no `.eden` file to write.
+
+| Mario Kart World race | Average | Median | 10% low | 1% low | Worst frame |
+|---|---:|---:|---:|---:|---:|
+| Fritchii v5.5 alone | 35.4 fps | 37.7 fps | 22.8 fps | 9.7 fps | 1,157 ms |
+| **v1.10.00** | **34.7 fps** | **36.4 fps** | **24.5 fps** | **15.3 fps** | **290 ms** |
+
+> **Pre-release.** It installs as ProsperoEden (`PPSA99008`) and replaces a ProsperoEden already installed; settings, saves and game files under `/data/prosperoeden` are shared.
+
+> **No piracy.** No games, keys or firmware are included, and they never will be. Use only games, keys and firmware you dumped yourself from hardware you own.
+
+### New
+
+- **No `.eden` file needed.** Copy a Switch 2 game's `.xci`, `.nup` or `.nsp` into `roms/` (or a folder of its own there) and it is in the Library. A `.nup` is always a Switch 2 game; an `.xci` or `.nsp` is one when its title ID says so, and Switch 1 games keep starting as before. A `.eden` file is still read, for a loose dump or for options a file alone cannot carry.
+- **Fritchii v5.5** (from v5.3): AMD drivers now prepare all of a game's recorded pipelines, and several Windows-side fixes. Frame generation (MihawkGen) keeps working: v5.5 switches it off in Fritchii builds, and the PS5 build keeps it under its own setting.
+- **Our PS5 renderer work is back.** Since the move to Lichii, a moved line in a source file made the build drop whole files of our changes without a word. They are re-targeted to the current code: guest writes no longer wait for the GPU thread's cache locks, pages ahead of a write are marked at once, exact conditional rendering, a barrier after each compute dispatch, and the per-draw timers. Where upstream now does the same, ours gave way (its compute barriers, draw submission policy, flush-area fast path and blitter memory release).
+
+### Fixes
+
+- **Fewer long stalls in races**: Mario Kart World's 1% low 9.7 → 15.3 fps, worst frame 1.16 s → 0.29 s.
+- **Ocarina of Time looked too bright** with an earlier attempt of this work (a read fast path that missed GPU-written buffers); the picture now matches Fritchii's.
+
+### Known issues
+
+- Ocarina of Time draws no flowers on the PS5.
+
 ## v1.00.00
 
 The first pre-release of PS5_Lichii: Switch 2 games on the PS5 Pro, on [Fritchii](https://github.com/Frizti/Fritchii) v5.3. It is built from the code and settings of the measured run 50: Ocarina of Time in Hyrule Field, moving, frame generation off.

@@ -47,7 +47,8 @@ cd "$checkout" || exit 1
 [[ -d build/dev/PPSA99008 ]] || { echo "no build/dev/PPSA99008 in $checkout (make ns2-dev)"; exit 1; }
 # The build must link the driver the shared archive holds (a stale isolated copy linked the old
 # driver into every worktree on 2026-11-04 and voided their fault counts).
-shared=$(sha256sum < "$C/../mihawk-vulkan-review/.deps/native/radv-release/lib/libvulkan_radeon.ps5.a" | cut -d' ' -f1)
+siblings=$(cat .local/siblings 2>/dev/null || echo ..)  # the checkout's sibling folder (PROSPERO_SIBLINGS)
+shared=$(sha256sum < "$siblings/mihawk-vulkan-review/.deps/native/radv-release/lib/libvulkan_radeon.ps5.a" | cut -d' ' -f1)
 isolated=$(python3 -c 'import json; print(json.load(open("build/radv-isolated/manifest.json")).get("source_sha256", ""))' 2>/dev/null)
 if [[ ${ALLOW_OLD_DRIVER:-0} != 1 && $isolated != "$shared" ]]; then
     echo "REFUSED: $checkout links a driver copy isolated from another archive; rm build/radv-isolated/libvulkan_radeon.ps5.a and rebuild (ALLOW_OLD_DRIVER=1 to run anyway)"

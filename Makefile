@@ -53,7 +53,7 @@ release: package ## Release files in dist/: ZIP, SHA256SUMS, release notes (defa
 package: prepare ## Build the app as released: build/release/PPSA99008
 	bash tools/build-package.sh release
 
-# The only source: Frizti/Fritchii v5.3 (1a7a3c0, an Eden-derived Switch 2 emulator, tools/deps.json) plus
+# The only source: Frizti/Fritchii v5.5 (4012e52, an Eden-derived Switch 2 emulator, tools/deps.json) plus
 # patches/fritchii (the PS5 layer's needs; <patch>.d holds ours on top). Games start through the direct
 # loader (.eden descriptors). EDEN_VK_PORT_LENIENT=1 until the skipped Vulkan edits are re-targeted.
 export EDEN_VK_PORT_LENIENT ?= 1

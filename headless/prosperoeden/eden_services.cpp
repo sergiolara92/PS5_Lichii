@@ -293,7 +293,7 @@ std::vector<std::string> GameFiles() {
         for (char& c : lower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
         return lower.ends_with(".nsp") || lower.ends_with(".xci")
 #ifdef PROSPERO_DIRECT_RESEARCH
-            || Eden::IsFolderGameEntry(lower)
+            || Eden::IsFolderGameEntry(lower) || Eden::IsNupFile(lower)
 #endif
             ;
     };

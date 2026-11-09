@@ -66,6 +66,15 @@ static std::size_t EdenHeapPackNow(std::size_t want) {
 #include "preferences.h"
 #include "metadata_bridge.h"
 #include "folder_game_entry.h"
+namespace {
+// The Switch 2 route (the direct loader): a .eden descriptor, a NUP container, or a game card image or
+// package whose program is a Switch 2 one (title IDs 04...). Other games take Eden's own loader.
+[[maybe_unused]] bool UsesSwitch2Route(const std::string& path) {
+    if (Eden::IsFolderGameEntry(path) || Eden::IsNupFile(path)) return true;
+    if (!Eden::HasExtension(path, ".xci") && !Eden::HasExtension(path, ".nsp")) return false;
+    return (eden_game_title_id(path.c_str()) >> 56) == 0x04;
+}
+} // namespace
 #ifdef EDEN_PS5_OPENGL
 #include "graphics.h"
 #include "video_core/renderer_base.h"
@@ -732,12 +741,15 @@ int main(int argc, char** argv) {
 #ifdef PROSPERO_DIRECT_RESEARCH
                 // A Switch 2 game's .eden descriptor, in roms/ or in the game's own folder (as the
                 // library finds it).
-                if (extension == ".eden") candidates.push_back(path);
+                if (extension == ".eden" || extension == ".nup") candidates.push_back(path);
                 std::error_code inner_error;
                 if (Eden::DirectoryExists(path))
-                    for (const auto& inner : Eden::ReadNativeDirectory(path, inner_error))
-                        if (inner.path().extension() == ".eden")
+                    for (const auto& inner : Eden::ReadNativeDirectory(path, inner_error)) {
+                        const auto inner_extension = inner.path().extension();
+                        if (inner_extension == ".eden" || inner_extension == ".nup" ||
+                            inner_extension == ".xci" || inner_extension == ".nsp")
                             candidates.push_back(path + "/" + inner.path().filename().string());
+                    }
 #endif
             }
             for (const auto& path : candidates) {
@@ -777,10 +789,10 @@ int main(int argc, char** argv) {
         try {
         launch_error.clear();
 #ifdef PROSPERO_DIRECT_RESEARCH
-        if (!research_selected && Eden::IsFolderGameEntry(selected_game)) {
+        if (!research_selected && UsesSwitch2Route(selected_game)) {
             research = Prospero::Development::ResearchRoute(selected_game);
             if (research.Invalid()) throw std::runtime_error(research.Error());
-            if (!research.Pending()) throw std::runtime_error("This extracted game entry is disabled");
+            if (!research.Pending()) throw std::runtime_error("This game entry is disabled");
             selected_game = research.TakeEntryPoint();
             research_selected = true;
         }
@@ -900,7 +912,7 @@ int main(int argc, char** argv) {
         // console's research route, with the same profiles, so a run stops where the console's does.
         Prospero::Development::ResearchRoute research(Eden::AppFile("research-input.json"));
         std::string research_entry;
-        if (guest && Eden::IsFolderGameEntry(guest)) {
+        if (guest && UsesSwitch2Route(guest)) {
             research = Prospero::Development::ResearchRoute(guest);
             if (research.Invalid() || !research.Pending()) {
                 std::fprintf(stderr, "research route: %s\n", research.Invalid() ? research.Error().c_str() : "entry disabled");

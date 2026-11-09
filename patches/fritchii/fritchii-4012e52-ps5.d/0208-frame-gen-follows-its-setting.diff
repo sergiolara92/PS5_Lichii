@@ -1,0 +1,14 @@
+--- a/src/common/settings.cpp
++++ b/src/common/settings.cpp
+@@ -403,8 +403,9 @@
+ }
+ 
+ bool FrameGenActive() {
+-    static const bool fritchii = std::string_view{Common::g_build_name} == "Fritchii";
+-    return values.frame_gen.GetValue() && !fritchii;
++    // The PS5 build is named Fritchii too, but offers frame generation (MihawkGen, Lossless
++    // Scaling) in its own settings: there it follows the setting.
++    return values.frame_gen.GetValue();
+ }
+ 
+ size_t FrameGenGenerations() {

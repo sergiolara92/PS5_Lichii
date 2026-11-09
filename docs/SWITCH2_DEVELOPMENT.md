@@ -12,7 +12,7 @@ your own dump of the game, your own `prod.keys` and your own firmware files.
 
 | Part | Where | What it is |
 |---|---|---|
-| Emulator source | `tools/deps.json` entry `fritchii` | [Fritchii](https://github.com/Frizti/Fritchii) v5.3 (GPL-3.0), an Eden-derived emulator with Switch 2 services, fetched as an archive at a pinned commit. It is the only source |
+| Emulator source | `tools/deps.json` entry `fritchii` | [Fritchii](https://github.com/Frizti/Fritchii) v5.5 (GPL-3.0), an Eden-derived emulator with Switch 2 services, fetched as an archive at a pinned commit. It is the only source |
 | PS5 patch | `patches/fritchii/fritchii-<commit>-ps5.patch` and `.d/` | The few source changes the PS5 layer needs (development loader, read errors as values, the JIT's fiber depth) |
 | PS5 layer | `headless/` (and `src/`) | The PS5 frontend, memory, JIT, threads, files, pad, audio, launcher. It *derives* about 90 Eden/Eglantine files at configure time (`headless/CMakeLists.txt`) |
 | Console Vulkan edits | `tools/prepare-vulkan-port.py` | Edits to the Vulkan renderer for the PS5 driver (RADV on the PS5), applied at configure time |
@@ -149,7 +149,11 @@ Close ProsperoEden on the console before installing. `DEV_TITLE=<16-digit title 
 | `/data/prosperoeden/user/log/eden_log.txt` | the emulator's log |
 | `/data/homebrew/PPSA99008/` | the installed app |
 
-A Switch 2 game is described by a JSON `.eden` file next to its dump:
+A Switch 2 game file (`.xci`, `.nup`, or an `.nsp` whose title ID starts with `04`) in `roms/` or a
+game folder there is started as it is: `ReadResearchDescriptor` (research_descriptor.cpp) builds the
+descriptor below in memory for it, and `UsesSwitch2Route` (main.cpp) sends it to the direct loader
+while Switch 1 files keep Eden's own. A JSON `.eden` file is still read, for a loose dump or for options
+a file alone cannot carry (`"nup_update": false`):
 
 ```json
 {
