@@ -1,0 +1,40 @@
+From 39b9892f000b3ae943d3dd72a8729eaf71db0595 Mon Sep 17 00:00:00 2001
+From: Takoroka <137927095+Takoroka@users.noreply.github.com>
+Date: Sun, 1 Nov 2026 01:49:31 -0400
+Subject: [PATCH] vulkan_device: keep an integrated GPU's budget within its
+ memory share
+
+CollectPhysicalMemoryInfo gives an integrated GPU 4 GiB of device memory
+(6 GiB with aggressive VRAM use), since its device-local heap is system
+memory. GetDeviceMemoryBudget returned the heap's driver budget instead
+(21178 MiB on a Radeon 780M), and the texture cache follows that budget
+for Switch 2 titles: it collected only past 20.6 GB, filling system RAM,
+and kept ASTC uncompressed (the BC3 switch looks at the budget too). Cap
+it at that share.
+
+Radeon 780M, Mario Kart World title screen, 200 s: shared GPU memory
+2.7 -> 3.6 GB instead of 7.6 -> 12.7 GB (0.25 instead of 1.8 GB/min),
+private bytes 12.9 instead of 22.4 GB at the end, ASTC re-compressed to
+BC3, same frame rate.
+---
+ src/video_core/vulkan_common/vulkan_device.cpp | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/src/video_core/vulkan_common/vulkan_device.cpp b/src/video_core/vulkan_common/vulkan_device.cpp
+index 623ab7c30d..c1a40e7906 100644
+--- a/src/video_core/vulkan_common/vulkan_device.cpp
++++ b/src/video_core/vulkan_common/vulkan_device.cpp
+@@ -1663,6 +1663,13 @@ u64 Device::GetDeviceMemoryBudget() const {
+             result += AllocatedUsage(budget.heapUsage[heap], heap_budgets[heap]);
+         }
+     }
++    if (is_integrated) {
++        // An integrated GPU's device-local heap is system memory (a Radeon 780M reported a 21 GB
++        // budget): following it let the texture cache fill that much RAM before collecting, and
++        // kept ASTC uncompressed. Its budget is at most the share CollectPhysicalMemoryInfo
++        // gives it (4 GiB, 6 GiB with aggressive VRAM use).
++        result = (std::min)(result, device_access_memory);
++    }
+     return result;
+ }
+ 

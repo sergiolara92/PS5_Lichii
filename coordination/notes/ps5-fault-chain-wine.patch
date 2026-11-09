@@ -1,0 +1,418 @@
+From 7122577c3e9b9c1eba169c9d802d0d07e491d825 Mon Sep 17 00:00:00 2001
+From: Mihawk <163614687+mihawk-99@users.noreply.github.com>
+Date: Sun, 1 Nov 2026 07:15:03 -0500
+Subject: [PATCH] ntdll: PS5: a fault can record what a register chain points
+ at
+
+An access violation in a game says which address was touched and leaves the
+registers in the seh trace; what the code was looking for is not recorded, and
+the game's own handler then decides what happens next. Reading a register's
+chain at the fault answers "what was the value it meant to use" from the same
+record, without a debugger and without a build per question.
+
+WINE_PS5_FAULT_CHAIN carries the chain, so no game-specific code lives here:
+
+    rdi+0xe0;+0x158;u32:+0;u8:+4;u64:+0x10;u64:+0x30
+
+reg[+off] is the start, "+off" reads 64 bits and continues from that value, and
+u8:/u32:/u64:+off report that width without moving on. It is written to the
+backtrace log line the seh trace already prints ("chain: ...").
+
+Every hop is checked before it is read (committed, readable at the width, inside
+one region): a fault inside the fault recorder would lose the record it was
+written for. A hop that fails is named "<unreadable>" and ends the walk. The
+format and the walk take no Wine header and no allocation, so
+tests/test_ps5_fault_chain.c drives them on the host.
+
+No behaviour changes when the variable is unset.
+---
+ dlls/ntdll/Makefile.in       |   1 +
+ dlls/ntdll/exception.c       | 100 +++++++++++++++++++++
+ dlls/ntdll/ps5_fault_chain.c | 169 +++++++++++++++++++++++++++++++++++
+ dlls/ntdll/ps5_fault_chain.h |  61 +++++++++++++
+ 4 files changed, 331 insertions(+)
+ create mode 100644 dlls/ntdll/ps5_fault_chain.c
+ create mode 100644 dlls/ntdll/ps5_fault_chain.h
+
+diff --git a/dlls/ntdll/Makefile.in b/dlls/ntdll/Makefile.in
+index 38c865b..7c6eb6a 100644
+--- a/dlls/ntdll/Makefile.in
++++ b/dlls/ntdll/Makefile.in
+@@ -29,6 +29,7 @@ SOURCES = \
+ 	path.c \
+ 	printf.c \
+ 	process.c \
++	ps5_fault_chain.c \
+ 	reg.c \
+ 	relay.c \
+ 	resource.c \
+diff --git a/dlls/ntdll/exception.c b/dlls/ntdll/exception.c
+index 3b524d0..4967899 100644
+--- a/dlls/ntdll/exception.c
++++ b/dlls/ntdll/exception.c
+@@ -34,6 +34,7 @@
+ #include "wine/debug.h"
+ #include "excpt.h"
+ #include "ntdll_misc.h"
++#include "ps5_fault_chain.h"
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(seh);
+ WINE_DECLARE_DEBUG_CHANNEL(threadname);
+@@ -191,6 +192,103 @@ static LONG call_vectored_handlers( EXCEPTION_RECORD *rec, CONTEXT *context )
+ }
+ 
+ 
++/* PS5 Proton: WINE_PS5_FAULT_CHAIN — read a register + offset chain at the fault, so the
++ * record says what the code was looking for, not only the address it touched.  The spec and
++ * the walk are in ps5_fault_chain.c (host-tested); this part knows the registers and may
++ * touch memory. */
++static const WCHAR ps5_fault_chain_var[] = L"WINE_PS5_FAULT_CHAIN";
++
++#ifdef __x86_64__
++static ULONG64 ps5_fault_chain_register( const CONTEXT *context, const char *name )
++{
++    static const struct { const char *name; size_t offset; } regs[] =
++    {
++        { "rax", offsetof( CONTEXT, Rax ) }, { "rbx", offsetof( CONTEXT, Rbx ) },
++        { "rcx", offsetof( CONTEXT, Rcx ) }, { "rdx", offsetof( CONTEXT, Rdx ) },
++        { "rsi", offsetof( CONTEXT, Rsi ) }, { "rdi", offsetof( CONTEXT, Rdi ) },
++        { "rbp", offsetof( CONTEXT, Rbp ) }, { "rsp", offsetof( CONTEXT, Rsp ) },
++        { "r8",  offsetof( CONTEXT, R8 )  }, { "r9",  offsetof( CONTEXT, R9 )  },
++        { "r10", offsetof( CONTEXT, R10 ) }, { "r11", offsetof( CONTEXT, R11 ) },
++        { "r12", offsetof( CONTEXT, R12 ) }, { "r13", offsetof( CONTEXT, R13 ) },
++        { "r14", offsetof( CONTEXT, R14 ) }, { "r15", offsetof( CONTEXT, R15 ) },
++        { "rip", offsetof( CONTEXT, Rip ) },
++    };
++    unsigned int i, c;
++
++    for (i = 0; i < sizeof(regs) / sizeof(regs[0]); i++)
++    {
++        for (c = 0; name[c] && name[c] == regs[i].name[c]; c++) {}
++        if (!name[c] && !regs[i].name[c])
++            return *(const ULONG64 *)((const char *)context + regs[i].offset);
++    }
++    return 0;
++}
++
++/* Committed, readable at the whole width, checked before it is read: a fault inside the
++ * fault recorder would lose the record it was written for. */
++static int ps5_fault_chain_read( void *ctx, uint64_t address, unsigned int width, uint64_t *value )
++{
++    MEMORY_BASIC_INFORMATION info;
++    const unsigned char *bytes = (const unsigned char *)(ULONG_PTR)address;
++    unsigned int i;
++
++    (void)ctx;
++    if (width != 1 && width != 4 && width != 8) return 0;
++    if (address + width < address) return 0;
++    if (NtQueryVirtualMemory( GetCurrentProcess(), (void *)(ULONG_PTR)address, MemoryBasicInformation,
++                              &info, sizeof(info), NULL )) return 0;
++    if (info.State != MEM_COMMIT) return 0;
++    if (info.Protect & (PAGE_GUARD | PAGE_NOACCESS)) return 0;
++    if (!(info.Protect & (PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY
++                          | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY))) return 0;
++    if (address + width > (ULONG64)(ULONG_PTR)info.BaseAddress + info.RegionSize) return 0;
++
++    *value = 0;
++    for (i = 0; i < width; i++) *value |= (uint64_t)bytes[i] << (8 * i);
++    return 1;
++}
++
++static void ps5_fault_chain_report( const CONTEXT *context )
++{
++    static UNICODE_STRING name = { sizeof(ps5_fault_chain_var) - sizeof(WCHAR), sizeof(ps5_fault_chain_var),
++                                   (WCHAR *)ps5_fault_chain_var };
++    WCHAR value[192];
++    UNICODE_STRING out;
++    struct ps5_fault_chain chain;
++    char spec[192], line[512];
++    ULONG64 start;
++    unsigned int i, count;
++
++    out.Length = 0;
++    out.MaximumLength = sizeof(value);
++    out.Buffer = value;
++    if (RtlQueryEnvironmentVariable_U( NULL, &name, &out )) return;   /* not set */
++
++    count = out.Length / sizeof(WCHAR);
++    if (!count || count >= sizeof(spec)) return;
++    for (i = 0; i < count; i++) spec[i] = (char)value[i];
++    spec[count] = 0;
++
++    if (!ps5_fault_chain_parse( spec, &chain, NULL ))
++    {
++        WINE_BACKTRACE_LOG( "chain: bad WINE_PS5_FAULT_CHAIN=%s\n", spec );
++        return;
++    }
++
++    start = ps5_fault_chain_register( context, chain.reg );
++    if (!start)
++    {
++        WINE_BACKTRACE_LOG( "chain: no register %s in the spec\n", chain.reg );
++        return;
++    }
++
++    ps5_fault_chain_walk( &chain, start, ps5_fault_chain_read, NULL, line, sizeof(line) );
++    WINE_BACKTRACE_LOG( "chain: %s\n", line );
++}
++#else
++static void ps5_fault_chain_report( const CONTEXT *context ) { (void)context; }
++#endif
++
+ /*******************************************************************
+  *		dispatch_exception
+  */
+@@ -213,6 +311,8 @@ NTSTATUS WINAPI dispatch_exception( EXCEPTION_RECORD *rec, CONTEXT *context )
+             WINE_BACKTRACE_LOG( "--- Exception %#lx.\n", rec->ExceptionCode );
+     }
+ 
++    if (context && rec->ExceptionCode == EXCEPTION_ACCESS_VIOLATION) ps5_fault_chain_report( context );
++
+     switch (rec->ExceptionCode)
+     {
+     case EXCEPTION_WINE_STUB:
+diff --git a/dlls/ntdll/ps5_fault_chain.c b/dlls/ntdll/ps5_fault_chain.c
+new file mode 100644
+index 0000000..f7a76bf
+--- /dev/null
++++ b/dlls/ntdll/ps5_fault_chain.c
+@@ -0,0 +1,169 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++/* ps5_fault_chain.h: parse a WINE_PS5_FAULT_CHAIN spec, then walk it through a reader. */
++#include "ps5_fault_chain.h"
++
++struct writer
++{
++    char        *buf;
++    size_t       len;
++    unsigned int pos;
++};
++
++static void put( struct writer *w, char c )
++{
++    if (w->pos + 1 < w->len)
++    {
++        w->buf[w->pos++] = c;
++        w->buf[w->pos] = 0;
++    }
++}
++
++static void put_str( struct writer *w, const char *s )
++{
++    while (*s) put( w, *s++ );
++}
++
++/* "0x" and at least min_digits hex digits; min_digits pads with leading zeros. */
++static void put_hex( struct writer *w, uint64_t value, unsigned int min_digits )
++{
++    char digits[16];
++    unsigned int n = 0, i;
++
++    do
++    {
++        digits[n++] = "0123456789abcdef"[value & 0xf];
++        value >>= 4;
++    } while (value || n < min_digits);
++
++    put_str( w, "0x" );
++    for (i = n; i > 0; i--) put( w, digits[i - 1] );
++}
++
++static void put_signed_hex( struct writer *w, int value, unsigned int min_digits )
++{
++    put( w, value < 0 ? '-' : '+' );
++    put_hex( w, value < 0 ? (uint64_t)-(int64_t)value : (uint64_t)value, min_digits );
++}
++
++/* An offset: a sign, then decimal or 0x hex digits. */
++static int parse_offset( const char *s, int *off, const char **end )
++{
++    int negative = 0, base = 10, value = 0, any = 0, digit;
++
++    if (*s == '+') s++;
++    else if (*s == '-') negative = 1, s++;
++    else return 0;
++
++    if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) base = 16, s += 2;
++
++    for (;; s++)
++    {
++        if (*s >= '0' && *s <= '9') digit = *s - '0';
++        else if (base == 16 && *s >= 'a' && *s <= 'f') digit = *s - 'a' + 10;
++        else if (base == 16 && *s >= 'A' && *s <= 'F') digit = *s - 'A' + 10;
++        else break;
++        if (value > (0x7fffffff - digit) / base) return 0;   /* too large for an int offset */
++        value = value * base + digit;
++        any = 1;
++    }
++
++    if (!any) return 0;
++    *off = negative ? -value : value;
++    *end = s;
++    return 1;
++}
++
++int ps5_fault_chain_parse( const char *spec, struct ps5_fault_chain *chain, const char **bad )
++{
++    const char *s = spec;
++    unsigned int r = 0, kind;
++    int off;
++
++    chain->reg[0] = 0;
++    chain->start_off = 0;
++    chain->count = 0;
++    if (bad) *bad = spec;
++
++    while (*s == ' ' || *s == '\t') s++;
++    while (r + 1 < PS5_FAULT_REG_MAX && ((*s >= 'a' && *s <= 'z') || (*s >= '0' && *s <= '9')))
++        chain->reg[r++] = *s++;
++    chain->reg[r] = 0;
++    if (!r) return 0;
++
++    if (*s == '+' || *s == '-')
++    {
++        if (!parse_offset( s, &off, &s )) return 0;
++        chain->start_off = off;
++    }
++    if (bad) *bad = s;
++
++    while (*s == ';')
++    {
++        s++;
++        if (chain->count >= PS5_FAULT_CHAIN_MAX) return 0;
++
++        kind = PS5_FAULT_STEP_DEREF;
++        if (s[0] == 'u' && s[1] == '8'  && s[2] == ':')                kind = PS5_FAULT_STEP_U8,  s += 3;
++        else if (s[0] == 'u' && s[1] == '3' && s[2] == '2' && s[3] == ':') kind = PS5_FAULT_STEP_U32, s += 4;
++        else if (s[0] == 'u' && s[1] == '6' && s[2] == '4' && s[3] == ':') kind = PS5_FAULT_STEP_U64, s += 4;
++
++        if (!parse_offset( s, &off, &s )) return 0;
++        chain->steps[chain->count].kind = (unsigned char)kind;
++        chain->steps[chain->count].off = off;
++        chain->count++;
++        if (bad) *bad = s;
++    }
++
++    return *s == 0;   /* trailing junk is a bad spec */
++}
++
++unsigned int ps5_fault_chain_walk( const struct ps5_fault_chain *chain, uint64_t start,
++                                   ps5_fault_read_fn read, void *ctx, char *buf, size_t len )
++{
++    struct writer w;
++    uint64_t current = start + (uint64_t)(int64_t)chain->start_off, value;
++    unsigned int i, width;
++
++    w.buf = buf;
++    w.len = len;
++    w.pos = 0;
++    if (len) buf[0] = 0;
++
++    put_str( &w, chain->reg );
++    put_signed_hex( &w, chain->start_off, 1 );
++    put( &w, '=' );
++    put_hex( &w, start, 1 );
++
++    for (i = 0; i < chain->count; i++)
++    {
++        switch (chain->steps[i].kind)
++        {
++        case PS5_FAULT_STEP_U8:  width = 1; break;
++        case PS5_FAULT_STEP_U32: width = 4; break;
++        default:                 width = 8; break;
++        }
++
++        put( &w, ';' );
++        switch (chain->steps[i].kind)
++        {
++        case PS5_FAULT_STEP_U8:  put_str( &w, "u8" );  break;
++        case PS5_FAULT_STEP_U32: put_str( &w, "u32" ); break;
++        case PS5_FAULT_STEP_U64: put_str( &w, "u64" ); break;
++        default: break;
++        }
++        put_signed_hex( &w, chain->steps[i].off, 1 );
++
++        value = 0;
++        if (!read( ctx, current + (uint64_t)(int64_t)chain->steps[i].off, width, &value ))
++        {
++            put_str( &w, "=<unreadable>" );
++            return i + 1;
++        }
++        put( &w, '=' );
++        put_hex( &w, value, width * 2 );
++
++        if (chain->steps[i].kind == PS5_FAULT_STEP_DEREF) current = value;
++    }
++
++    return chain->count;
++}
+diff --git a/dlls/ntdll/ps5_fault_chain.h b/dlls/ntdll/ps5_fault_chain.h
+new file mode 100644
+index 0000000..8b9317b
+--- /dev/null
++++ b/dlls/ntdll/ps5_fault_chain.h
+@@ -0,0 +1,61 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++/*
++ * PS5 Proton: a general register + offset chain read at a fault.
++ *
++ * The seh trace records the registers of an access violation; this reads what those
++ * registers point at, so a fault shows the state the code was looking for instead of
++ * only the address it touched.  The chain is a spec from WINE_PS5_FAULT_CHAIN:
++ *
++ *     rdi+0xe0;+0x158;u32:+0;u8:+4;u64:+0x10;u64:+0x30
++ *
++ *   reg[+off]              the start: that register's value, plus the offset
++ *   +off                   read 64 bits there; that value becomes the current address
++ *   u8:|u32:|u64:+off      report that width there; the current address does not move
++ *
++ * Parse and walk take no Wine header, no allocation and no libc, so a host test drives
++ * them; only the reader that touches memory belongs to ntdll.
++ */
++#ifndef __WINE_PS5_FAULT_CHAIN_H
++#define __WINE_PS5_FAULT_CHAIN_H
++
++#include <stddef.h>
++#include <stdint.h>
++
++#define PS5_FAULT_CHAIN_MAX 8
++#define PS5_FAULT_REG_MAX   8
++
++enum ps5_fault_step_kind
++{
++    PS5_FAULT_STEP_DEREF = 0,   /* 64 bits read, becomes the current address */
++    PS5_FAULT_STEP_U8    = 1,   /* reported only */
++    PS5_FAULT_STEP_U32   = 2,
++    PS5_FAULT_STEP_U64   = 3,
++};
++
++struct ps5_fault_step
++{
++    unsigned char kind;
++    int           off;
++};
++
++struct ps5_fault_chain
++{
++    char                  reg[PS5_FAULT_REG_MAX];
++    int                   start_off;
++    unsigned int          count;
++    struct ps5_fault_step steps[PS5_FAULT_CHAIN_MAX];
++};
++
++/* 1: the spec parsed into chain.  0: it did not, and *bad (when given) starts at the
++ * first token that did not parse. */
++int ps5_fault_chain_parse( const char *spec, struct ps5_fault_chain *chain, const char **bad );
++
++/* Reads width (1, 4 or 8) bytes at address; 1 when they are readable. */
++typedef int (*ps5_fault_read_fn)( void *ctx, uint64_t address, unsigned int width, uint64_t *value );
++
++/* Walks the chain from start.  Returns the steps completed, which is fewer than the chain
++ * holds when a hop was unreadable; buf holds one line, with no newline. */
++unsigned int ps5_fault_chain_walk( const struct ps5_fault_chain *chain, uint64_t start,
++                                   ps5_fault_read_fn read, void *ctx, char *buf, size_t len );
++
++#endif /* __WINE_PS5_FAULT_CHAIN_H */
+-- 
+2.56.0
+

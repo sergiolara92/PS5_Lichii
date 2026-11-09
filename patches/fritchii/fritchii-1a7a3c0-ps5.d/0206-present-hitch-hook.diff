@@ -1,0 +1,46 @@
+nx2:vi2 present: each present calls eden_nx2_present_hook (weak) with the time since the previous present
+and how long that one was blocked in the present path, so the PS5 development build says what happened
+during each long frame (headless/performance.cpp, EDEN_HITCH). Eglantine patch 0043, re-anchored for Fritchii.
+
+--- a/src/core/hle/service/nx2_gsv.h
++++ b/src/core/hle/service/nx2_gsv.h
+@@ -81,6 +81,11 @@
+ #include "core/hle/service/server_manager.h"
+ #include "core/hle/service/service.h"
+ 
++// Called at each present with the time since the previous one and how long that previous present
++// was blocked here (fence, composite, pacing), both in us; the PS5 build's development reports
++// define it (headless/performance.cpp, EDEN_HITCH lines) and other builds leave it null.
++extern "C" void eden_nx2_present_hook(long long frame_us, long long blocked_us) __attribute__((weak));
++
+ namespace Service {
+ 
+ // Creates a session served by `iface` and returns its client end. Unlike PushIpcInterface this
+@@ -1788,6 +1793,11 @@
+             frames_ahead = 1;
+         }
+         const auto entered = std::chrono::steady_clock::now();
++        if (eden_nx2_present_hook && m_stats.last_present != std::chrono::steady_clock::time_point{}) {
++            eden_nx2_present_hook(
++                std::chrono::duration_cast<std::chrono::microseconds>(entered - m_stats.last_present).count(),
++                m_last_blocked_us);
++        }
+         if (frames_ahead == 1 || (frames_ahead == -1 && !WaitForFrame(~w[22], w[24], true))) {
+             LOG_DEBUG(Service, "nx2:vi2 present #{} fence ({}, {:#x}), waiting for ({}, {:#x}); now {:#x}",
+                       m_presents, ~w[22], w[24], m_previous_fence_id, m_previous_fence_value,
+@@ -1816,6 +1826,7 @@
+         const auto composited = std::chrono::steady_clock::now();
+         PaceToVblank(w[12], ctx.GetThread().GetOwnerProcess());
+         const auto paced = std::chrono::steady_clock::now();
++        m_last_blocked_us = std::chrono::duration_cast<std::chrono::microseconds>(paced - entered).count();
+         if (Common::DkbFrameTrace::Enabled()) {
+             const auto ms = [](auto duration) {
+                 return std::chrono::duration<double, std::milli>(duration).count();
+@@ -1889,6 +1900,7 @@
+     // Eden's GPU thread has processed the frame. Otherwise the game laps the GPU thread and
+     // rewrites command memory it hasn't read yet.
+     u32 m_wait_timeouts{};
++    long long m_last_blocked_us{};
+     struct PresentStats {
+         long long frame_us{}, fence_us{}, composite_us{}, pace_us{}, max_fence_us{};
+         long long max_frame_us{}, hitches{};

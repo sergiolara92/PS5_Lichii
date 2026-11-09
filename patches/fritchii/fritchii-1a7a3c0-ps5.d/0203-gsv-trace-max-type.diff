@@ -1,0 +1,12 @@
+diff --color -ru a/src/core/hle/service/nx2_gsv.h b/src/core/hle/service/nx2_gsv.h
+--- a/src/core/hle/service/nx2_gsv.h	2026-11-08 21:08:40.401446565 -0500
++++ b/src/core/hle/service/nx2_gsv.h	2026-11-08 21:08:40.403905471 -0500
+@@ -2491,7 +2491,7 @@
+                         vsync_state->trace_late_callbacks +=
+                             VblankInterval.count() > 0 && late >= VblankInterval;
+                         vsync_state->trace_max_late =
+-                            (std::max)(vsync_state->trace_max_late, late.count());
++                            (std::max<s64>)(vsync_state->trace_max_late, late.count()); // PS5: s64 is long, rep long long
+                         if (vsync_state->trace_last_callback) {
+                             const s64 gap = observed - *vsync_state->trace_last_callback;
+                             vsync_state->trace_min_gap = vsync_state->trace_min_gap

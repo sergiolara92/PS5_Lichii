@@ -1,0 +1,40 @@
+nx2_precompile: the recipes shipped beside the program are looked for in the executable's folder on
+Windows only (Common::FS::GetExeDirectory is Windows-only; other systems look in the title's folder).
+
+--- a/src/video_core/nx2_precompile.cpp
++++ b/src/video_core/nx2_precompile.cpp
+@@ -144,6 +144,16 @@
+     return title_dir / fmt::format("precompiled.fork-v{}.nx2prep", cache_version);
+ }
+ 
++// The folder of recipes shipped beside the program: the executable's folder on Windows, none
++// elsewhere (GetExeDirectory is Windows-only; there the title's folder is the only place looked in).
++static std::filesystem::path ShippedRecipeDir() {
++#ifdef _WIN32
++    return Common::FS::GetExeDirectory() / "recipes";
++#else
++    return {};
++#endif
++}
++
+ std::optional<Recipe> FindRecipe(u64 title_id, const std::filesystem::path& title_dir,
+                                  u32 cache_version) {
+     std::vector<std::filesystem::path> candidates;
+@@ -151,7 +161,7 @@
+         forced != nullptr && *forced != '\0') {
+         candidates.emplace_back(forced);
+     }
+-    for (const auto& folder : {title_dir, Common::FS::GetExeDirectory() / "recipes"}) {
++    for (const auto& folder : {title_dir, ShippedRecipeDir()}) {
+         std::error_code error;
+         std::vector<std::filesystem::path> found;
+         for (std::filesystem::directory_iterator it{folder, error}, end; !error && it != end;
+@@ -201,7 +211,7 @@
+                      "Precompiled pipelines: no {} and no recipe for {:016X} (looked in {} and {})",
+                      precompiled.filename().string(), title_id,
+                      Common::FS::PathToUTF8String(title_dir),
+-                     Common::FS::PathToUTF8String(Common::FS::GetExeDirectory() / "recipes"));
++                     Common::FS::PathToUTF8String(ShippedRecipeDir()));
+             return {};
+         }
+         return precompiled;

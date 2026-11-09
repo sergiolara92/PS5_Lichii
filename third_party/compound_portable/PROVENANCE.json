@@ -1,0 +1,60 @@
+{
+  "upstream_url": "https://github.com/ovsky/compound",
+  "upstream_commit": "9ea3122589f1116838a5f2bef46dc5be9a79cba8",
+  "upstream_project_name": "Pound",
+  "vendored_on": "2026-10-27",
+  "license_file": "LICENSE",
+  "license": "GPL-3.0",
+  "modifications": "None. These original files are copied byte-for-byte. The separately authored wrapper lives in headless/compound.",
+  "scope": "Five portable C sources implementing a limited A64 interpreter, guest memory, register state, logging and error strings. No game loader, guest GPU renderer, Ballistic, LuaJIT, SDL, key handling or firmware is included.",
+  "files": [
+    {
+      "path": "src/core/cpu/interpreter.c",
+      "sha256": "46245b3f1cb74d8ef12a20c2108658b5d99ba46b29b289a87299f7f7cfd2680a"
+    },
+    {
+      "path": "src/core/cpu/interpreter.h",
+      "sha256": "4510ded30ad077f4ff107e7004fafca9ec181c9e495866d45bbe0da86f707479"
+    },
+    {
+      "path": "src/core/memory/guest_memory.c",
+      "sha256": "a9c9f20349241784c5f1986a343be7815ebe64b42c16b865e420c13f395f078a"
+    },
+    {
+      "path": "src/core/memory/guest_memory.h",
+      "sha256": "1e3928f2e1652c4353b39db0374f66285983b51fbfc0b5700842c462a47a4544"
+    },
+    {
+      "path": "src/core/guest_state.c",
+      "sha256": "94f59cf0e96a3628d831847d764bd55c9fceba1f38c4dd3a46e2f53b960de70f"
+    },
+    {
+      "path": "src/core/guest_state.h",
+      "sha256": "dd6cd59f4cf895c0d7e4496dd0a0887b72752d324c0dd007eb0077a4f204af2b"
+    },
+    {
+      "path": "src/core/log.c",
+      "sha256": "2a6694f263b4e2ce13bf9bcb9c552262d1ca50b72f61217d775ff1758a49a62c"
+    },
+    {
+      "path": "src/core/log.h",
+      "sha256": "87d42b722db742fe810c02a27202e5fcdb5c441dc8af6594a76b65be411cc39b"
+    },
+    {
+      "path": "src/core/errors.c",
+      "sha256": "9b33eeb548cdf53048ab2178e1c292529550a7077cf73983f608e79eb5a4f882"
+    },
+    {
+      "path": "src/core/errors.h",
+      "sha256": "d22c95f7d2306223710c3e8a64e0b2314eb388dc8a9adebadf0e5f6f34bc0dbf"
+    },
+    {
+      "path": "src/core/attributes.h",
+      "sha256": "91bdfac4608bc89df9762a30a5d5cb1393f940bfea957afc615cee1df053c7da"
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "230184f60bae2feaf244f10a8bac053c8ff33a183bcc365b4d8b876d2b7f4809"
+    }
+  ]
+}

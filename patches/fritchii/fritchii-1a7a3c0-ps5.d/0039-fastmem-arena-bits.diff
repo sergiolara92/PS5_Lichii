@@ -1,0 +1,29 @@
+The JIT range-checks direct (fastmem) accesses to the arena's size when it is smaller than the guest's
+address space: the PS5's 64-bit window is 2^38 bytes (HostMemory::VirtualSize), a 39-bit guest address
+beyond it takes the page-table path instead of reaching past the window.
+
+diff --git a/src/core/arm/dynarmic/arm_dynarmic_64.cpp b/src/core/arm/dynarmic/arm_dynarmic_64.cpp
+index e65e38d..6795392 100644
+--- a/src/core/arm/dynarmic/arm_dynarmic_64.cpp
++++ b/src/core/arm/dynarmic/arm_dynarmic_64.cpp
+@@ -4,6 +4,7 @@
+ // SPDX-FileCopyrightText: Copyright 2018 yuzu Emulator Project
+ // SPDX-License-Identifier: GPL-2.0-or-later
+ 
++#include <bit>
+ #include <atomic>
+ #include <cstdlib>
+ #if defined(_M_X64) || defined(__x86_64__)
+@@ -246,7 +247,12 @@ void ArmDynarmic64::MakeJit(Common::PageTable* page_table, std::size_t address_s
+         config.fastmem_pointer = page_table->fastmem_arena ?
+             std::optional<uintptr_t>{reinterpret_cast<uintptr_t>(page_table->fastmem_arena)} :
+             std::nullopt;
++        // An arena smaller than the address space (the PS5's 64-bit window is 2^38) bounds the
++        // direct accesses: the JIT range-checks to the arena's size, not the guest's.
+         config.fastmem_address_space_bits = std::uint32_t(address_space_bits);
++        if (const size_t arena = m_system.DeviceMemory().buffer.VirtualSize(); config.fastmem_pointer && arena &&
++            std::bit_width(arena) - 1 < int(address_space_bits))
++            config.fastmem_address_space_bits = std::uint32_t(std::bit_width(arena) - 1);
+         config.silently_mirror_fastmem = false;
+ 
+         config.fastmem_exclusive_access = config.fastmem_pointer != std::nullopt;

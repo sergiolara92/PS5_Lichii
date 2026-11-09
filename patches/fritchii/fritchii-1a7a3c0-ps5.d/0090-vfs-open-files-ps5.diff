@@ -1,0 +1,23 @@
+Real VFS: on the PS5 at most 128 files kept open (was up to 8192), after EglantinePS5 516a6bb. A
+game loaded from a loose RomFS opens thousands of files; the console's file and mutex resources ran
+out far below its reported RLIMIT_NOFILE, so opens failed with ENOMEM ("Cannot allocate memory") and
+a mutex lock then threw, about 20 s into the game. The cache's LRU eviction and reopen are unchanged.
+
+diff --color -ru a/src/core/file_sys/vfs/vfs_real.cpp b/src/core/file_sys/vfs/vfs_real.cpp
+--- a/src/core/file_sys/vfs/vfs_real.cpp	2026-11-04 15:02:45.967031600 -0500
++++ b/src/core/file_sys/vfs/vfs_real.cpp	2026-11-04 15:02:45.983237097 -0500
+@@ -55,7 +55,14 @@
+         return static_cast<size_t>(std::max<rlim_t>(rl.rlim_cur, 576) - 512);
+     }();
+ #endif
++#ifdef __PROSPERO__
++    // The PS5 runs out of file and mutex resources well below its reported RLIMIT_NOFILE: a game
++    // loaded from a loose RomFS (thousands of files) failed opens with ENOMEM, then a mutex lock
++    // threw. Evicted files are reopened when read again.
++    return (std::min)(size_t{128}, limit);
++#else
+     return (std::min)(size_t{8192}, limit);
++#endif
+ }
+ 
+ bool IsWithinRoot(std::string_view root, std::string_view full_path) {

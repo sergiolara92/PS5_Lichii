@@ -1,0 +1,1116 @@
+{
+  "format": 1,
+  "scope": "Source-only isolated native startup research overlay; no build or console execution",
+  "created_utc": "2026-10-29T00:54:18.058829+00:00",
+  "pinned_eden_commit": "67bada77f8a43a90da2e94e89b8e7da73c256989",
+  "pinned_archive": "/home/codexbuild/work/ProsperoCompound_Night/ProsperoEden/.deps/eden-67bada77.tar.gz",
+  "pinned_archive_sha256": "d42b6fb492c65eb5e98ab72a786dff01fd64384d073a739b9c9ff475414366ee",
+  "casa_v5_patch_sha256": "4dddfcdec5cc8717dc1d5662fddddf5a0bc61da22a2ce231f8ae4ed0e14a8537",
+  "cas32_all_orders_patch_sha256": "e4f813b595d4b9e9e13827df073598a181f9e0e329a11b0e9fca900836913828",
+  "cas32_all_orders_delta_sha256": "3c84291ade62fbe8cd9c2759d56923af7a783e854cbfe6025533a15e42efb124",
+  "previous_native_bundle_manifest_sha256": "2d03a1e1da7b275449a058974cac64435fdb1ba683bbe1a26afc8eaf79365032",
+  "ldapr_patch_sha256": "80606a6eaf062e2fae486be3594d27269a49bb6129f1a5dded86cf0f0f712e24",
+  "ldapr_delta_sha256": "fb494b394629769b53a37fc206b40c94b1aad53f6ecf2abcd5f417df7b719d0d",
+  "strict_private_port_sha256": "0d53ffde0236cf3d3b3099bf2ba081f821bfb3d5fad87f9727911cd08b9a2cae",
+  "profile_defaults": {
+    "pauth_disabled": false,
+    "remote_region": false,
+    "strict_memory_aborts": false,
+    "native_build_bridge": false,
+    "allow_execute": false
+  },
+  "verified_program_id": "0400c3f00006e000",
+  "remote_hle_bytes": 68719476736,
+  "forbidden_active_baseline_roots": [
+    "/home/codexbuild/work/ProsperoCompound_Night/ProsperoEden",
+    "/home/codexbuild/work/ProsperoCompound_Night/cache/ps5-eden-headless.18ed2b4d956a"
+  ],
+  "bundle_installation": "Copy this complete bundle to tools/native-startup-research inside a future isolated candidate checkout. Replay --scope port once, then normal prepare replays --scope eden. Active baseline is refused.",
+  "files": [
+    {
+      "scope": "eden",
+      "relative": "src/common/fs/file.cpp",
+      "overlay": "overlay/eden/src/common/fs/file.cpp",
+      "pinned_sha256": "dc33b656377e3b051421cf568d1103a573dfba4fd8955fd27db5514a9b0ca3ca",
+      "native_baseline_sha256": "a581e5652a3f2508e3aa5ed695aa7410b8a5db46d436b8c4b360cda3dd9ed431",
+      "final_sha256": "a581e5652a3f2508e3aa5ed695aa7410b8a5db46d436b8c4b360cda3dd9ed431",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/cache/ps5-eden-headless.18ed2b4d956a/source/src/common/fs/file.cpp",
+      "reviewed_before_sha256": [
+        "a581e5652a3f2508e3aa5ed695aa7410b8a5db46d436b8c4b360cda3dd9ed431"
+      ]
+    },
+    {
+      "scope": "eden",
+      "relative": "src/common/fs/file.h",
+      "overlay": "overlay/eden/src/common/fs/file.h",
+      "pinned_sha256": "18385cd79c7fd280365f30e7e150d82a274a053b10d11cbed06f304a04459bed",
+      "native_baseline_sha256": "5e564c23573e4c5575b1eb9e485fbbdf96a7af9d4d75112df9d35486be9ef5bb",
+      "final_sha256": "5e564c23573e4c5575b1eb9e485fbbdf96a7af9d4d75112df9d35486be9ef5bb",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/cache/ps5-eden-headless.18ed2b4d956a/source/src/common/fs/file.h",
+      "reviewed_before_sha256": [
+        "5e564c23573e4c5575b1eb9e485fbbdf96a7af9d4d75112df9d35486be9ef5bb"
+      ]
+    },
+    {
+      "scope": "eden",
+      "relative": "src/core/CMakeLists.txt",
+      "overlay": "overlay/eden/src/core/CMakeLists.txt",
+      "pinned_sha256": "7fb357c049a5968cb4496ea8eeb056f3d81d4753b0e03bf0aeb995e0e4004c9a",
+      "native_baseline_sha256": "13476fc2a968ff721c741500a9cefd2d124b6eba3f473f876ff08f5acfab4060",
+      "final_sha256": "b8b49d1f5d861fec1f8cf2b439e596c4e5e4e42499d94dd06f6182f29717173b",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/cache/ps5-eden-headless.18ed2b4d956a/source/src/core/CMakeLists.txt",
+      "reviewed_before_sha256": [
+        "13476fc2a968ff721c741500a9cefd2d124b6eba3f473f876ff08f5acfab4060"
+      ]
+    },
+    {
+      "scope": "eden",
+      "relative": "src/core/arm/dynarmic/arm_dynarmic_64.cpp",
+      "overlay": "overlay/eden/src/core/arm/dynarmic/arm_dynarmic_64.cpp",
+      "pinned_sha256": "6b78cc05387c2d9d5493a8c67a85bdd3338a6d777c4afda3244e6be8e6876f4f",
+      "native_baseline_sha256": "6b78cc05387c2d9d5493a8c67a85bdd3338a6d777c4afda3244e6be8e6876f4f",
+      "final_sha256": "e19cc14b02363fdd79d3aaffc511b50c36232749919a033f8fe9ac0253524305",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/cache/ps5-eden-headless.18ed2b4d956a/source/src/core/arm/dynarmic/arm_dynarmic_64.cpp",
+      "reviewed_before_sha256": [
+        "592d6125dea032751134da3484d59a8dc15fb6032885e1abcc138a8afd562a38",
+        "7985806a259f67d467bf21ec0451ce041da5e6027ec4a48b5a68c46d0630f6fd",
+        "ee663858fbf53e27cb146b86f8507776d920c0ac49069a9c32e918267c1a283d",
+        "1238f15761ee92d61c4213334b6164b81c0f23ddb074091adfbf8658ef77dcc0"
+      ]
+    },
+    {
+      "scope": "eden",
+      "relative": "src/core/arm/dynarmic/arm_dynarmic_64.h",
+      "overlay": "overlay/eden/src/core/arm/dynarmic/arm_dynarmic_64.h",
+      "pinned_sha256": "27d69224b499558c6678c621814d8facb5bc0d2da884097465e4cb04b4f6a5ca",
+      "native_baseline_sha256": "27d69224b499558c6678c621814d8facb5bc0d2da884097465e4cb04b4f6a5ca",
+      "final_sha256": "5d3953e8e7b824d8491a63e5867b19fc5f53e0e3f38f1a180670d0cdf25a35c8",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/cache/ps5-eden-headless.18ed2b4d956a/source/src/core/arm/dynarmic/arm_dynarmic_64.h",
+      "reviewed_before_sha256": [
+        "42594baf7e9042d5360de205a562d1535b522ff4c935c5afbcd3c35797c20be7",
+        "69e8af7b9fbde322ed3edf9a3e0681657132be93f2928a398e90011776c9f6c5",
+        "42594baf7e9042d5360de205a562d1535b522ff4c935c5afbcd3c35797c20be7"
+      ]
+    },
+    {
+      "scope": "eden",
+      "relative": "src/core/file_sys/fsa/fs_i_file.h",
+      "overlay": "overlay/eden/src/core/file_sys/fsa/fs_i_file.h",
+      "pinned_sha256": "73cb3e57e301eeb5f88b020c6ce8de51626ccb305f8a3935eb062592ebf5e713",
+      "native_baseline_sha256": "accfaf935ec03e5d3222b70f3c4fe1a55b0abe9179950bba6d91c57bb10bc20b",
+      "final_sha256": "accfaf935ec03e5d3222b70f3c4fe1a55b0abe9179950bba6d91c57bb10bc20b",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/cache/ps5-eden-headless.18ed2b4d956a/source/src/core/file_sys/fsa/fs_i_file.h",
+      "reviewed_before_sha256": [
+        "accfaf935ec03e5d3222b70f3c4fe1a55b0abe9179950bba6d91c57bb10bc20b"
+      ]
+    },
+    {
+      "scope": "eden",
+      "relative": "src/core/file_sys/program_metadata.cpp",
+      "overlay": "overlay/eden/src/core/file_sys/program_metadata.cpp",
+      "pinned_sha256": "5f103ad723a2bf249013ed1fb64365d736a6fa1f1f11ccce0122fe6369586a1e",
+      "native_baseline_sha256": "53003a481e46c6651b14be87e21b47cf24dd0435b2cc979028981aa01810ea94",
+      "final_sha256": "53003a481e46c6651b14be87e21b47cf24dd0435b2cc979028981aa01810ea94",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/cache/ps5-eden-headless.18ed2b4d956a/source/src/core/file_sys/program_metadata.cpp",
+      "reviewed_before_sha256": [
+        "53003a481e46c6651b14be87e21b47cf24dd0435b2cc979028981aa01810ea94"
+      ]
+    },
+    {
+      "scope": "eden",
+      "relative": "src/core/file_sys/program_metadata.h",
+      "overlay": "overlay/eden/src/core/file_sys/program_metadata.h",
+      "pinned_sha256": "9b20bcb187fb4576f6a3afe8d890c428ad2df4ec41532dee9317b58b9f4a1482",
+      "native_baseline_sha256": "d537a4c022f8baa99ee39fc35fbd26a795a4f2e98c52a02179c955c0e66ae119",
+      "final_sha256": "d537a4c022f8baa99ee39fc35fbd26a795a4f2e98c52a02179c955c0e66ae119",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/cache/ps5-eden-headless.18ed2b4d956a/source/src/core/file_sys/program_metadata.h",
+      "reviewed_before_sha256": [
+        "d537a4c022f8baa99ee39fc35fbd26a795a4f2e98c52a02179c955c0e66ae119"
+      ]
+    },
+    {
+      "scope": "eden",
+      "relative": "src/core/file_sys/savedata_factory.cpp",
+      "overlay": "overlay/eden/src/core/file_sys/savedata_factory.cpp",
+      "pinned_sha256": "9e547a11d6677d527e769682b6a3d26b5313983144860212e084c10f7031d3a6",
+      "native_baseline_sha256": "49f3b2e8d1dcae3fb4f6b774a5b9b2a270822823aeacf2aac6af48e09f5b13aa",
+      "final_sha256": "49f3b2e8d1dcae3fb4f6b774a5b9b2a270822823aeacf2aac6af48e09f5b13aa",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/cache/ps5-eden-headless.18ed2b4d956a/source/src/core/file_sys/savedata_factory.cpp",
+      "reviewed_before_sha256": [
+        "49f3b2e8d1dcae3fb4f6b774a5b9b2a270822823aeacf2aac6af48e09f5b13aa"
+      ]
+    },
+    {
+      "scope": "eden",
+      "relative": "src/core/file_sys/vfs/vfs_read_error.h",
+      "overlay": "overlay/eden/src/core/file_sys/vfs/vfs_read_error.h",
+      "pinned_sha256": null,
+      "native_baseline_sha256": "7dcd657365083960a1c1404b09c7e99a9d434ae1685bee864c5703e39c6c1a0b",
+      "final_sha256": "7dcd657365083960a1c1404b09c7e99a9d434ae1685bee864c5703e39c6c1a0b",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/cache/ps5-eden-headless.18ed2b4d956a/source/src/core/file_sys/vfs/vfs_read_error.h",
+      "reviewed_before_sha256": [
+        "7dcd657365083960a1c1404b09c7e99a9d434ae1685bee864c5703e39c6c1a0b"
+      ]
+    },
+    {
+      "scope": "eden",
+      "relative": "src/core/file_sys/vfs/vfs_real.cpp",
+      "overlay": "overlay/eden/src/core/file_sys/vfs/vfs_real.cpp",
+      "pinned_sha256": "8c7421072fd69ea7076e7aedbafa41abdffeb506131926edad15f85509d84ce8",
+      "native_baseline_sha256": "4cf18afa307d8dc0133ad413a7980ce289f019168f7a607dc246421e7278f68b",
+      "final_sha256": "4cf18afa307d8dc0133ad413a7980ce289f019168f7a607dc246421e7278f68b",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/cache/ps5-eden-headless.18ed2b4d956a/source/src/core/file_sys/vfs/vfs_real.cpp",
+      "reviewed_before_sha256": [
+        "4cf18afa307d8dc0133ad413a7980ce289f019168f7a607dc246421e7278f68b"
+      ]
+    },
+    {
+      "scope": "eden",
+      "relative": "src/core/file_sys/vfs/vfs_real.h",
+      "overlay": "overlay/eden/src/core/file_sys/vfs/vfs_real.h",
+      "pinned_sha256": "d8fd19cf9c6f5defbaa63353a6798e07b1e27b7288f616fe48a3cc534d29dec9",
+      "native_baseline_sha256": "5dde82cd0a28a2415e6c1197bba43b2173d8abc1aaf611284c15b92c57433934",
+      "final_sha256": "5dde82cd0a28a2415e6c1197bba43b2173d8abc1aaf611284c15b92c57433934",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/cache/ps5-eden-headless.18ed2b4d956a/source/src/core/file_sys/vfs/vfs_real.h",
+      "reviewed_before_sha256": [
+        "5dde82cd0a28a2415e6c1197bba43b2173d8abc1aaf611284c15b92c57433934"
+      ]
+    },
+    {
+      "scope": "eden",
+      "relative": "src/core/hle/kernel/k_memory_block.h",
+      "overlay": "overlay/eden/src/core/hle/kernel/k_memory_block.h",
+      "pinned_sha256": "c78caf393a3e1d930c3b6a8d096a84440146f6cca65047238d7225237b067052",
+      "native_baseline_sha256": "c78caf393a3e1d930c3b6a8d096a84440146f6cca65047238d7225237b067052",
+      "final_sha256": "e14a79ea4acf5fc1379bb8f40b00f69c2486150d4bf90da5b1e4d4f659fcdbb9",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/cache/ps5-eden-headless.18ed2b4d956a/source/src/core/hle/kernel/k_memory_block.h",
+      "reviewed_before_sha256": [
+        "e14a79ea4acf5fc1379bb8f40b00f69c2486150d4bf90da5b1e4d4f659fcdbb9"
+      ]
+    },
+    {
+      "scope": "eden",
+      "relative": "src/core/hle/kernel/k_page_table_base.cpp",
+      "overlay": "overlay/eden/src/core/hle/kernel/k_page_table_base.cpp",
+      "pinned_sha256": "d0317167991556de17a8e3c79584cad935241beee71b849873eb48a82eb6c5dd",
+      "native_baseline_sha256": "d0317167991556de17a8e3c79584cad935241beee71b849873eb48a82eb6c5dd",
+      "final_sha256": "792b7487f0a1f7a35c830f86c56c8e202b23992d2ca5f21148b4b681d78e4c81",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/cache/ps5-eden-headless.18ed2b4d956a/source/src/core/hle/kernel/k_page_table_base.cpp",
+      "reviewed_before_sha256": [
+        "d6319de88071e3bc80520dc4d46b5422434d8ba1d8c14b6a7136b417571141a9",
+        "d6319de88071e3bc80520dc4d46b5422434d8ba1d8c14b6a7136b417571141a9"
+      ]
+    },
+    {
+      "scope": "eden",
+      "relative": "src/core/hle/kernel/k_page_table_base.h",
+      "overlay": "overlay/eden/src/core/hle/kernel/k_page_table_base.h",
+      "pinned_sha256": "b7e92fe64e4ef3b481bd8881c7e77d272c377905d60439cb5176b62e94c277a0",
+      "native_baseline_sha256": "b7e92fe64e4ef3b481bd8881c7e77d272c377905d60439cb5176b62e94c277a0",
+      "final_sha256": "9e87ed13ecc214fc39461c0f8f5212877a54b53862b8f43f2b8e77db5b8000c7",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/cache/ps5-eden-headless.18ed2b4d956a/source/src/core/hle/kernel/k_page_table_base.h",
+      "reviewed_before_sha256": [
+        "b882f2581d6e8641465fa968c4954734605dfed07d73514dacc5017dac1e57f9",
+        "c7075b2d4be5559a371453f6854d8a5dfb0ace7711c7d99ac87784f289388364",
+        "b882f2581d6e8641465fa968c4954734605dfed07d73514dacc5017dac1e57f9",
+        "8e9056212e4023b2f961b85da9cb70cecd29b368f1e769f6405734b9cda97e4c"
+      ]
+    },
+    {
+      "scope": "eden",
+      "relative": "src/core/hle/kernel/k_process.cpp",
+      "overlay": "overlay/eden/src/core/hle/kernel/k_process.cpp",
+      "pinned_sha256": "66481df2e10cbeba41a592a1cac723ea3867622c52a8f11506c49fc42d63b670",
+      "native_baseline_sha256": "66481df2e10cbeba41a592a1cac723ea3867622c52a8f11506c49fc42d63b670",
+      "final_sha256": "a8349c33d31c89cec692cb0d78d2557c0cfbdf710beb158460bf0c8646e5e450",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/cache/ps5-eden-headless.18ed2b4d956a/source/src/core/hle/kernel/k_process.cpp",
+      "reviewed_before_sha256": [
+        "a8349c33d31c89cec692cb0d78d2557c0cfbdf710beb158460bf0c8646e5e450"
+      ]
+    },
+    {
+      "scope": "eden",
+      "relative": "src/core/hle/kernel/k_process_page_table.h",
+      "overlay": "overlay/eden/src/core/hle/kernel/k_process_page_table.h",
+      "pinned_sha256": "e53926741d7e3cf3a2367f91c825fb31439f16cf0941dc1009e58cff54a7eda2",
+      "native_baseline_sha256": "e53926741d7e3cf3a2367f91c825fb31439f16cf0941dc1009e58cff54a7eda2",
+      "final_sha256": "e83a40a5c03cdaaf35c048b1085fafda71ae92868c6079ea5558aff7e14a0d14",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/cache/ps5-eden-headless.18ed2b4d956a/source/src/core/hle/kernel/k_process_page_table.h",
+      "reviewed_before_sha256": [
+        "e83a40a5c03cdaaf35c048b1085fafda71ae92868c6079ea5558aff7e14a0d14"
+      ]
+    },
+    {
+      "scope": "eden",
+      "relative": "src/core/hle/kernel/research_remote_region_layout.h",
+      "overlay": "overlay/eden/src/core/hle/kernel/research_remote_region_layout.h",
+      "pinned_sha256": null,
+      "native_baseline_sha256": null,
+      "final_sha256": "4ee66908ed2c44a75d3e84b3be154ff17f2e44c7bf0d03000bb00aea874bdb3f",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/cache/ps5-eden-headless.18ed2b4d956a/source/src/core/hle/kernel/research_remote_region_layout.h",
+      "reviewed_before_sha256": [
+        "4ee66908ed2c44a75d3e84b3be154ff17f2e44c7bf0d03000bb00aea874bdb3f"
+      ]
+    },
+    {
+      "scope": "eden",
+      "relative": "src/core/hle/kernel/research_remote_region_policy.h",
+      "overlay": "overlay/eden/src/core/hle/kernel/research_remote_region_policy.h",
+      "pinned_sha256": null,
+      "native_baseline_sha256": null,
+      "final_sha256": "3e159f3ab18f01e9f9f5463e08251b98b3eba80e8fe6809ee7211a542e98c961",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/cache/ps5-eden-headless.18ed2b4d956a/source/src/core/hle/kernel/research_remote_region_policy.h",
+      "reviewed_before_sha256": [
+        "3e159f3ab18f01e9f9f5463e08251b98b3eba80e8fe6809ee7211a542e98c961"
+      ]
+    },
+    {
+      "scope": "eden",
+      "relative": "src/core/hle/kernel/svc/svc_info.cpp",
+      "overlay": "overlay/eden/src/core/hle/kernel/svc/svc_info.cpp",
+      "pinned_sha256": "b118f5e32d2dd711e9815bc85c94e0d10f7d0351a678c772b6d3535de3b4a317",
+      "native_baseline_sha256": "b118f5e32d2dd711e9815bc85c94e0d10f7d0351a678c772b6d3535de3b4a317",
+      "final_sha256": "bdc52de7a3e391f405f9f64c0b35dc8880d4f6b84f5a84b0329b093cde2793f7",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/cache/ps5-eden-headless.18ed2b4d956a/source/src/core/hle/kernel/svc/svc_info.cpp",
+      "reviewed_before_sha256": [
+        "5fe620d12828ada67ff7ebcb22e3bf253323dcb58e204f1dda59204c599c85aa",
+        "bdc52de7a3e391f405f9f64c0b35dc8880d4f6b84f5a84b0329b093cde2793f7"
+      ]
+    },
+    {
+      "scope": "eden",
+      "relative": "src/core/hle/kernel/svc_types.h",
+      "overlay": "overlay/eden/src/core/hle/kernel/svc_types.h",
+      "pinned_sha256": "d7160d1d89405a168a681cf3d261cd4e8089e786f2edb2041d7f932383458ac1",
+      "native_baseline_sha256": "d7160d1d89405a168a681cf3d261cd4e8089e786f2edb2041d7f932383458ac1",
+      "final_sha256": "efdcd7ca16d73b2a7fec57f278c0470eb07922742e11ae43e32a65bf3091fbe4",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/cache/ps5-eden-headless.18ed2b4d956a/source/src/core/hle/kernel/svc_types.h",
+      "reviewed_before_sha256": [
+        "efdcd7ca16d73b2a7fec57f278c0470eb07922742e11ae43e32a65bf3091fbe4"
+      ]
+    },
+    {
+      "scope": "eden",
+      "relative": "src/core/hle/service/am/service/application_proxy.cpp",
+      "overlay": "overlay/eden/src/core/hle/service/am/service/application_proxy.cpp",
+      "pinned_sha256": "5709db3aa3729fd58e270b228bdc65d5c8700610b99ffb499605c13eadf2c492",
+      "native_baseline_sha256": "5709db3aa3729fd58e270b228bdc65d5c8700610b99ffb499605c13eadf2c492",
+      "final_sha256": "c04d83281b44f4d50b1038a96a431b69c0a7df3cf869238e03c3a32759512ee3",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/cache/ps5-eden-headless.18ed2b4d956a/source/src/core/hle/service/am/service/application_proxy.cpp",
+      "reviewed_before_sha256": [
+        "62dab7f296d207f2ab2ad882714d162a13f0b2c231e1792725347504a964e336"
+      ]
+    },
+    {
+      "scope": "eden",
+      "relative": "src/core/hle/service/am/service/application_proxy.h",
+      "overlay": "overlay/eden/src/core/hle/service/am/service/application_proxy.h",
+      "pinned_sha256": "f6370a411b1c44c19c50cb62fed82e0bbde88feb3ea02afb65f3e16c013ffe37",
+      "native_baseline_sha256": "f6370a411b1c44c19c50cb62fed82e0bbde88feb3ea02afb65f3e16c013ffe37",
+      "final_sha256": "2b967bcfa17e2c24e1113c87a1bb9c5274e18b9d0c8083a2326f44e218b47eb6",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/cache/ps5-eden-headless.18ed2b4d956a/source/src/core/hle/service/am/service/application_proxy.h",
+      "reviewed_before_sha256": [
+        "3d792753ef9f5afe364a003e8369cec18dff2880cec4f738ca6eaac7c1fc47a3"
+      ]
+    },
+    {
+      "scope": "eden",
+      "relative": "src/core/hle/service/am/service/application_proxy_service.cpp",
+      "overlay": "overlay/eden/src/core/hle/service/am/service/application_proxy_service.cpp",
+      "pinned_sha256": "bc06048f82bf0a664d3b2353479b30f5e724663e5d68c066c821bf14a6733f7f",
+      "native_baseline_sha256": "bc06048f82bf0a664d3b2353479b30f5e724663e5d68c066c821bf14a6733f7f",
+      "final_sha256": "759161f379a74209f64068d45e3e7c0a2a3ed819cd218f8853aef970adcd48b9",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/cache/ps5-eden-headless.18ed2b4d956a/source/src/core/hle/service/am/service/application_proxy_service.cpp",
+      "reviewed_before_sha256": []
+    },
+    {
+      "scope": "eden",
+      "relative": "src/core/hle/service/am/service/application_proxy_service.h",
+      "overlay": "overlay/eden/src/core/hle/service/am/service/application_proxy_service.h",
+      "pinned_sha256": "ff89bd8f000bc03453d5cb431e5e07ec28e8863d7620bf5ccbc38d4c95fa4d22",
+      "native_baseline_sha256": "ff89bd8f000bc03453d5cb431e5e07ec28e8863d7620bf5ccbc38d4c95fa4d22",
+      "final_sha256": "341b16050f6abd5b41fd5c5ad79caf6da8ec925bc85df305fd0dc2b02d908645",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/cache/ps5-eden-headless.18ed2b4d956a/source/src/core/hle/service/am/service/application_proxy_service.h",
+      "reviewed_before_sha256": []
+    },
+    {
+      "scope": "eden",
+      "relative": "src/core/hle/service/filesystem/fsp/fs_i_storage.cpp",
+      "overlay": "overlay/eden/src/core/hle/service/filesystem/fsp/fs_i_storage.cpp",
+      "pinned_sha256": "44a63e8dafb1e76b4917b2629243ee42bf28fae1fc5a92394a605803a819ea2e",
+      "native_baseline_sha256": "054d2f43a67f29789f1984874e6e024f0ce48c6a7cc01b6917a267f616c4bd81",
+      "final_sha256": "054d2f43a67f29789f1984874e6e024f0ce48c6a7cc01b6917a267f616c4bd81",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/cache/ps5-eden-headless.18ed2b4d956a/source/src/core/hle/service/filesystem/fsp/fs_i_storage.cpp",
+      "reviewed_before_sha256": [
+        "054d2f43a67f29789f1984874e6e024f0ce48c6a7cc01b6917a267f616c4bd81"
+      ]
+    },
+    {
+      "scope": "eden",
+      "relative": "src/core/loader/development_factory.cpp",
+      "overlay": "overlay/eden/src/core/loader/development_factory.cpp",
+      "pinned_sha256": null,
+      "native_baseline_sha256": "0ea7456264267c1a80508a9ea0ebb58a3c41c41512779185dd0362cac276694f",
+      "final_sha256": "0ea7456264267c1a80508a9ea0ebb58a3c41c41512779185dd0362cac276694f",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/cache/ps5-eden-headless.18ed2b4d956a/source/src/core/loader/development_factory.cpp",
+      "reviewed_before_sha256": [
+        "0ea7456264267c1a80508a9ea0ebb58a3c41c41512779185dd0362cac276694f"
+      ]
+    },
+    {
+      "scope": "eden",
+      "relative": "src/core/loader/development_factory.h",
+      "overlay": "overlay/eden/src/core/loader/development_factory.h",
+      "pinned_sha256": null,
+      "native_baseline_sha256": "f6e3a5a614a45a65f0f9aedcdc7e169bdeeaf563e6862a6008b75db3656fa3ff",
+      "final_sha256": "f6e3a5a614a45a65f0f9aedcdc7e169bdeeaf563e6862a6008b75db3656fa3ff",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/cache/ps5-eden-headless.18ed2b4d956a/source/src/core/loader/development_factory.h",
+      "reviewed_before_sha256": [
+        "f6e3a5a614a45a65f0f9aedcdc7e169bdeeaf563e6862a6008b75db3656fa3ff"
+      ]
+    },
+    {
+      "scope": "eden",
+      "relative": "src/core/loader/loader.cpp",
+      "overlay": "overlay/eden/src/core/loader/loader.cpp",
+      "pinned_sha256": "4e2d452e23f546a18b26f989bc8e2c94f0abd5255a5b387259b2d856db4497b5",
+      "native_baseline_sha256": "f073522d7e0410a8fea9a88b691da424a06c66f8deab5d01324f97d051c2b68b",
+      "final_sha256": "f073522d7e0410a8fea9a88b691da424a06c66f8deab5d01324f97d051c2b68b",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/cache/ps5-eden-headless.18ed2b4d956a/source/src/core/loader/loader.cpp",
+      "reviewed_before_sha256": [
+        "f073522d7e0410a8fea9a88b691da424a06c66f8deab5d01324f97d051c2b68b"
+      ]
+    },
+    {
+      "scope": "eden",
+      "relative": "src/core/memory.cpp",
+      "overlay": "overlay/eden/src/core/memory.cpp",
+      "pinned_sha256": "f14cd177d9b5e6e51604bb38edde8c8d402fe87fef9f6332b82f552a7465c364",
+      "native_baseline_sha256": "61afc5acd9087f40d3d02481745e89f14dd2293dad45bd493de9363362d4e346",
+      "final_sha256": "bb4c255e28c76a29666a6c835a0980700a13acade2be7dd12d67e15a6f884205",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/cache/ps5-eden-headless.18ed2b4d956a/source/src/core/memory.cpp",
+      "reviewed_before_sha256": [
+        "682eae2f8d59df929828a0259e2c335f58aba7fde8e56c39d8782c36bbaa45b3",
+        "9fd74beeb0176267a1d4576bd0322a62b6455d5bc3052e33f42babc6cf18be3f",
+        "682eae2f8d59df929828a0259e2c335f58aba7fde8e56c39d8782c36bbaa45b3"
+      ]
+    },
+    {
+      "scope": "eden",
+      "relative": "src/core/memory.h",
+      "overlay": "overlay/eden/src/core/memory.h",
+      "pinned_sha256": "2f9323b4d44ff3aa199440b08ba22b9e9afd345ba0e6c32294ac48b3b6242d82",
+      "native_baseline_sha256": "2f9323b4d44ff3aa199440b08ba22b9e9afd345ba0e6c32294ac48b3b6242d82",
+      "final_sha256": "e37c7cb4186b607b346ce89f1f221336e0732643e72dd85c21da38a6b3d66e1a",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/cache/ps5-eden-headless.18ed2b4d956a/source/src/core/memory.h",
+      "reviewed_before_sha256": [
+        "4b6592a83d7e1969f96e7a0006ce9a96681facde5e063efbcbb220412ba355d3",
+        "8b8f50bccc53661a67ccd0172f2db02715f31678dc5fc74d1534523e21ffa781",
+        "8b8f50bccc53661a67ccd0172f2db02715f31678dc5fc74d1534523e21ffa781"
+      ]
+    },
+    {
+      "scope": "eden",
+      "relative": "src/core/research/native_startup_profile.h",
+      "overlay": "overlay/eden/src/core/research/native_startup_profile.h",
+      "pinned_sha256": null,
+      "native_baseline_sha256": null,
+      "final_sha256": "676b68e218c316a8b78fd67670604116026662ee15f5e68bab0060884a81d883",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/cache/ps5-eden-headless.18ed2b4d956a/source/src/core/research/native_startup_profile.h",
+      "reviewed_before_sha256": [
+        "676b68e218c316a8b78fd67670604116026662ee15f5e68bab0060884a81d883",
+        "ad22eab365a24de457f39220d8ebd80dce77bc853e09b50cf25c8d53a0295bdd"
+      ]
+    },
+    {
+      "scope": "eden",
+      "relative": "src/dynarmic/src/dynarmic/backend/arm64/a64_address_space.cpp",
+      "overlay": "overlay/eden/src/dynarmic/src/dynarmic/backend/arm64/a64_address_space.cpp",
+      "pinned_sha256": "46d5d3f7d00f84d4ab08d5d19c9f6632746a8bd43f0fc7c501b04036c78f16b2",
+      "native_baseline_sha256": "46d5d3f7d00f84d4ab08d5d19c9f6632746a8bd43f0fc7c501b04036c78f16b2",
+      "final_sha256": "638e1d0ad25e037437f436deb0470dc22b634fc548fe0fb9b9a5187c4ae75e9b",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/cache/ps5-eden-headless.18ed2b4d956a/source/src/dynarmic/src/dynarmic/backend/arm64/a64_address_space.cpp",
+      "reviewed_before_sha256": [
+        "638e1d0ad25e037437f436deb0470dc22b634fc548fe0fb9b9a5187c4ae75e9b"
+      ]
+    },
+    {
+      "scope": "eden",
+      "relative": "src/dynarmic/src/dynarmic/backend/x64/a64_emit_x64.cpp",
+      "overlay": "overlay/eden/src/dynarmic/src/dynarmic/backend/x64/a64_emit_x64.cpp",
+      "pinned_sha256": "d1aaecc9690d0ccdcd22880709396d9e5edcfe6eb1c6c46a78dbfdf1b949d558",
+      "native_baseline_sha256": "d1aaecc9690d0ccdcd22880709396d9e5edcfe6eb1c6c46a78dbfdf1b949d558",
+      "final_sha256": "1820b4f260ec9c551bc6538b1e4ea35855733b1eb074d54eaf5d5ed7976b4739",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/cache/ps5-eden-headless.18ed2b4d956a/source/src/dynarmic/src/dynarmic/backend/x64/a64_emit_x64.cpp",
+      "reviewed_before_sha256": [
+        "205979c37a0a086290958b1129cee3c74445aab0bfb435c52f9514a6e1d6b8d5",
+        "380fdfc400b1fcaac41ae034b7dd2a973e33b6acbfa0caac7d163b902cff742e",
+        "64c2e0c7be8993cf79d94a1e36ea0ca86e92369ee83fe0b52d74248c3b7eb8dc",
+        "64c2e0c7be8993cf79d94a1e36ea0ca86e92369ee83fe0b52d74248c3b7eb8dc",
+        "38fdfe9e7807b91c2ef7086896cbfa756f1320206b09c5657db325dfd8e166bc"
+      ]
+    },
+    {
+      "scope": "eden",
+      "relative": "src/dynarmic/src/dynarmic/backend/x64/a64_emit_x64_memory.cpp",
+      "overlay": "overlay/eden/src/dynarmic/src/dynarmic/backend/x64/a64_emit_x64_memory.cpp",
+      "pinned_sha256": "7960ab468e32fe2fe368a0c98076b30a5f35decdef65a63a494cf086b966e6f5",
+      "native_baseline_sha256": "7960ab468e32fe2fe368a0c98076b30a5f35decdef65a63a494cf086b966e6f5",
+      "final_sha256": "4a53d45c3cc15cc65edb63814465c215c4c3e7ce3c378e4036a603450fd22a63",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/cache/ps5-eden-headless.18ed2b4d956a/source/src/dynarmic/src/dynarmic/backend/x64/a64_emit_x64_memory.cpp",
+      "reviewed_before_sha256": [
+        "6b29fb5ca9428a4541a0938632a796029ca556602dea48d85c062db0fea3c796",
+        "9a22bd3781842bca5754b1bdf2452ae18871033cdb815957e12857596576f595",
+        "c490d10393d6c334b8d0c56f365f1f158d8e1b9cf46314b5c9a4349e3e1c7e84",
+        "c490d10393d6c334b8d0c56f365f1f158d8e1b9cf46314b5c9a4349e3e1c7e84",
+        "60951c17de5029ae3cafa4aba2ff5dfaca18d3a5f6636474505977c17a4be95c"
+      ]
+    },
+    {
+      "scope": "eden",
+      "relative": "src/dynarmic/src/dynarmic/backend/x64/a64_interface.cpp",
+      "overlay": "overlay/eden/src/dynarmic/src/dynarmic/backend/x64/a64_interface.cpp",
+      "pinned_sha256": "92fd32345fd013c7e416baf5b3336b24d8a465b615d92e74e5a61316952fd40c",
+      "native_baseline_sha256": "92fd32345fd013c7e416baf5b3336b24d8a465b615d92e74e5a61316952fd40c",
+      "final_sha256": "4c8320f0ee05d788c2a27ebbbfdac846d6dbd5e93d22592929b29d4d68a4f5a0",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/cache/ps5-eden-headless.18ed2b4d956a/source/src/dynarmic/src/dynarmic/backend/x64/a64_interface.cpp",
+      "reviewed_before_sha256": [
+        "4c8320f0ee05d788c2a27ebbbfdac846d6dbd5e93d22592929b29d4d68a4f5a0"
+      ]
+    },
+    {
+      "scope": "eden",
+      "relative": "src/dynarmic/src/dynarmic/frontend/A64/a64_ir_emitter.h",
+      "overlay": "overlay/eden/src/dynarmic/src/dynarmic/frontend/A64/a64_ir_emitter.h",
+      "pinned_sha256": "5cf947eb985c6413438987f76686fafb57e1f9dfc69295ce3f8f5c40940d420a",
+      "native_baseline_sha256": "5cf947eb985c6413438987f76686fafb57e1f9dfc69295ce3f8f5c40940d420a",
+      "final_sha256": "13d85c0a1387c1d3cc1db8224476cdf8d93f8781893107db776d48e950615eaa",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/cache/ps5-eden-headless.18ed2b4d956a/source/src/dynarmic/src/dynarmic/frontend/A64/a64_ir_emitter.h",
+      "reviewed_before_sha256": [
+        "1f6397a8b17b09f7fa541f6e712ad2561634440ac66ed59468203bd191e1ba89",
+        "70404371eb79d54df021d5b7389ef444e8ca4ab10c7c3579103f7c173a97b38f",
+        "954b5c540c2c0b3bd87e772e59a958bf66e19f42c52748718337a9755a0197ae",
+        "1f6397a8b17b09f7fa541f6e712ad2561634440ac66ed59468203bd191e1ba89",
+        "7385fce1516a498f019c1396218af0416071e75dd4fdfa5e22b16a39818166a1"
+      ]
+    },
+    {
+      "scope": "eden",
+      "relative": "src/dynarmic/src/dynarmic/frontend/A64/decoder/a64.inc",
+      "overlay": "overlay/eden/src/dynarmic/src/dynarmic/frontend/A64/decoder/a64.inc",
+      "pinned_sha256": "3d7aa6a3d9c2b95115cf2b434d28cc2ef8548d30d2976937c90ab4240cf04528",
+      "native_baseline_sha256": "3d7aa6a3d9c2b95115cf2b434d28cc2ef8548d30d2976937c90ab4240cf04528",
+      "final_sha256": "efab813548b8297b0635d373d8e2bda13220426512130758af79a9d8ada99312",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/cache/ps5-eden-headless.18ed2b4d956a/source/src/dynarmic/src/dynarmic/frontend/A64/decoder/a64.inc",
+      "reviewed_before_sha256": [
+        "420ec8ee100f3eef8bea983250b9152bee7fb4f8a0a42418bc81048b884453e4",
+        "71dc12334a633d1f2d1eafad8f68e35aae9d9385e249438661ae46ac29aff2c0",
+        "943f902f96bfee5ef9efee4ec10d31f04f8b46ffff1b8d074192168975d5b8e3",
+        "cee1d265163b03394c259b42a9632433f620e27b41edec321b39a1d3fb2ed5bc",
+        "298473a3c38e3ea4dbf2177ece1e497edc3eb22a3bc9f80ae8bd57c91758e309",
+        "19ab415c1ec8e9568b261a252efa4def2df8e5d97a1d313e738b035bf40ec862"
+      ]
+    },
+    {
+      "scope": "eden",
+      "relative": "src/dynarmic/src/dynarmic/frontend/A64/translate/a64_translate.h",
+      "overlay": "overlay/eden/src/dynarmic/src/dynarmic/frontend/A64/translate/a64_translate.h",
+      "pinned_sha256": "880ed522db69febbfbe8d1464e95147d9a90fce8eb6deb193152c7707c1a952b",
+      "native_baseline_sha256": "880ed522db69febbfbe8d1464e95147d9a90fce8eb6deb193152c7707c1a952b",
+      "final_sha256": "2d30ab5da5d1e104ebec241178b37232b5cb4cfe04b610d495a2d6f419665992",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/cache/ps5-eden-headless.18ed2b4d956a/source/src/dynarmic/src/dynarmic/frontend/A64/translate/a64_translate.h",
+      "reviewed_before_sha256": [
+        "3e2e7e02190ab07c60313a7380f3ea122ff7fceff4f66fcd77064ab6ee511e02"
+      ]
+    },
+    {
+      "scope": "eden",
+      "relative": "src/dynarmic/src/dynarmic/frontend/A64/translate/impl/a64_branch.cpp",
+      "overlay": "overlay/eden/src/dynarmic/src/dynarmic/frontend/A64/translate/impl/a64_branch.cpp",
+      "pinned_sha256": "58bd87f6585bd60975b15eae4455fa701bf63d0073e55daa2e9a85772718ece6",
+      "native_baseline_sha256": "58bd87f6585bd60975b15eae4455fa701bf63d0073e55daa2e9a85772718ece6",
+      "final_sha256": "1230837c31012505b7cb272e3c4f11aa8de2da34f35c19dbf98366b2732df71f",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/cache/ps5-eden-headless.18ed2b4d956a/source/src/dynarmic/src/dynarmic/frontend/A64/translate/impl/a64_branch.cpp",
+      "reviewed_before_sha256": [
+        "1230837c31012505b7cb272e3c4f11aa8de2da34f35c19dbf98366b2732df71f"
+      ]
+    },
+    {
+      "scope": "eden",
+      "relative": "src/dynarmic/src/dynarmic/frontend/A64/translate/impl/impl.h",
+      "overlay": "overlay/eden/src/dynarmic/src/dynarmic/frontend/A64/translate/impl/impl.h",
+      "pinned_sha256": "1eda76c97445643d8a277ee16d7e76a0004a7a42b7b602d5cfb59ef1f723bfb9",
+      "native_baseline_sha256": "1eda76c97445643d8a277ee16d7e76a0004a7a42b7b602d5cfb59ef1f723bfb9",
+      "final_sha256": "47f7b26230182937233456f5af527394a86761b829db7977b734546d1d27a99c",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/cache/ps5-eden-headless.18ed2b4d956a/source/src/dynarmic/src/dynarmic/frontend/A64/translate/impl/impl.h",
+      "reviewed_before_sha256": [
+        "4c874e9c163145d1f9814adc03409e8ddc6891085a5be20b66173483d44b4280",
+        "58342099d8de6025f62ea53e96212f356e29958865c51d3dd810e18f4ac93604",
+        "6c36d20259745caa5565e62568e4169dc84f53815b1902834d08658659866f61",
+        "b3569047a65c52669f3969e7bf4221cd59ba188085820d96289f7051184dbd3c",
+        "4c874e9c163145d1f9814adc03409e8ddc6891085a5be20b66173483d44b4280",
+        "f222dc7ef36edd8c459eb283c9f99754bf482ee579737a60474b6aeda13a1126"
+      ]
+    },
+    {
+      "scope": "eden",
+      "relative": "src/dynarmic/src/dynarmic/frontend/A64/translate/impl/load_store_exclusive.cpp",
+      "overlay": "overlay/eden/src/dynarmic/src/dynarmic/frontend/A64/translate/impl/load_store_exclusive.cpp",
+      "pinned_sha256": "8f8c1bd6ce63712ea709553a9208374677d1e91d5b284dc90f43e469f97ae041",
+      "native_baseline_sha256": "8f8c1bd6ce63712ea709553a9208374677d1e91d5b284dc90f43e469f97ae041",
+      "final_sha256": "b91f1e57ca556b202c009684af23904c413c01e58900096d0dd1d909a2293b55",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/cache/ps5-eden-headless.18ed2b4d956a/source/src/dynarmic/src/dynarmic/frontend/A64/translate/impl/load_store_exclusive.cpp",
+      "reviewed_before_sha256": [
+        "52ae3c9dd0ddc779da4feefaeaf40486f64f92e25b7285b1c79936c5c6121e60",
+        "95644c870274ceea4f81ea061abb61204b7982f7a5d1dbc471d75d6f3e707039",
+        "abf0e68f501d283f562176c0fc8804ff9fdb120604973d81dba0fbd0d6029d85",
+        "b05a5ad3bc6adc8b6cc4602bc5f803b35efd3ff34c574626961a9424f50ac76c",
+        "abf0e68f501d283f562176c0fc8804ff9fdb120604973d81dba0fbd0d6029d85",
+        "0875e4f06d5bbba4f2948607e352991f4372c4b94c4b819522651a6acc1206fd"
+      ]
+    },
+    {
+      "scope": "eden",
+      "relative": "src/dynarmic/src/dynarmic/frontend/A64/translate/impl/system.cpp",
+      "overlay": "overlay/eden/src/dynarmic/src/dynarmic/frontend/A64/translate/impl/system.cpp",
+      "pinned_sha256": "673269c9ac92dec96d30836243844b4ce13a0306049ad2b97dceea93c30d48aa",
+      "native_baseline_sha256": "673269c9ac92dec96d30836243844b4ce13a0306049ad2b97dceea93c30d48aa",
+      "final_sha256": "3ea0d9a7f36b05704ed53f16704d8ba9f64f6567f67ad33ddf9da12b1558317a",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/cache/ps5-eden-headless.18ed2b4d956a/source/src/dynarmic/src/dynarmic/frontend/A64/translate/impl/system.cpp",
+      "reviewed_before_sha256": []
+    },
+    {
+      "scope": "eden",
+      "relative": "src/dynarmic/src/dynarmic/interface/A64/config.h",
+      "overlay": "overlay/eden/src/dynarmic/src/dynarmic/interface/A64/config.h",
+      "pinned_sha256": "a0d247289d1c22c06b0257594d4dd1dbaef8fc4674972d7f670371300895324d",
+      "native_baseline_sha256": "a0d247289d1c22c06b0257594d4dd1dbaef8fc4674972d7f670371300895324d",
+      "final_sha256": "64ae807a0865a98473bb22e312ce8cc2f60662a6aa0cd374af55a73ec9d27741",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/cache/ps5-eden-headless.18ed2b4d956a/source/src/dynarmic/src/dynarmic/interface/A64/config.h",
+      "reviewed_before_sha256": [
+        "086a9fd03d4486584227ebcd93e42d48bf2904c299ccfbe5f54377548f4d66ed",
+        "e5c1cd86bb90fb7556733358c893d3e4ddfad68cce6509128cd48d4f12dfb60a",
+        "e5c1cd86bb90fb7556733358c893d3e4ddfad68cce6509128cd48d4f12dfb60a"
+      ]
+    },
+    {
+      "scope": "eden",
+      "relative": "src/dynarmic/src/dynarmic/interface/exclusive_monitor.h",
+      "overlay": "overlay/eden/src/dynarmic/src/dynarmic/interface/exclusive_monitor.h",
+      "pinned_sha256": "daeace05af303ef672428f97d85c9bb989fc0e6036b50249a8567d928c23dc7c",
+      "native_baseline_sha256": "daeace05af303ef672428f97d85c9bb989fc0e6036b50249a8567d928c23dc7c",
+      "final_sha256": "ac411027aeac0c727061b3908a153db16f39162fa9794cc7c21895ca8e59d408",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/cache/ps5-eden-headless.18ed2b4d956a/source/src/dynarmic/src/dynarmic/interface/exclusive_monitor.h",
+      "reviewed_before_sha256": [
+        "ac411027aeac0c727061b3908a153db16f39162fa9794cc7c21895ca8e59d408"
+      ]
+    },
+    {
+      "scope": "eden",
+      "relative": "src/dynarmic/src/dynarmic/ir/opcodes.h",
+      "overlay": "overlay/eden/src/dynarmic/src/dynarmic/ir/opcodes.h",
+      "pinned_sha256": "feced7023944a097f22b41bc8bb643ddeb48ab03eeb923651e5efafea2a37bad",
+      "native_baseline_sha256": "feced7023944a097f22b41bc8bb643ddeb48ab03eeb923651e5efafea2a37bad",
+      "final_sha256": "c5089f3d3b37f9f8270c89ae2cb8c1a705972f03dc57633c84a500247e1f44c4",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/cache/ps5-eden-headless.18ed2b4d956a/source/src/dynarmic/src/dynarmic/ir/opcodes.h",
+      "reviewed_before_sha256": [
+        "2afba103e85a5639d1b7536a1d1b4d562f5a23ff43ac7bf17295b70ea8e670c8",
+        "7b6f2cd31da31952f11186bfe1e023249a6a291e5d5b209917e852b44c0623e9",
+        "ba1d6cb4b630410ca08f9492b599444ac4979817f62a6f40641f374baa2ee381",
+        "ba1d6cb4b630410ca08f9492b599444ac4979817f62a6f40641f374baa2ee381",
+        "fa6453f4dcee44a1b3ce934ebeb1432909f763174d30413a2944a6d41d762897"
+      ]
+    },
+    {
+      "scope": "eden",
+      "relative": "src/dynarmic/src/dynarmic/ir/opcodes.inc",
+      "overlay": "overlay/eden/src/dynarmic/src/dynarmic/ir/opcodes.inc",
+      "pinned_sha256": "292324417a8c2cd29d63d98fe3b7ed1fcf71a2d1b1d0ae4d55dac2c63ce3fbc2",
+      "native_baseline_sha256": "292324417a8c2cd29d63d98fe3b7ed1fcf71a2d1b1d0ae4d55dac2c63ce3fbc2",
+      "final_sha256": "070ae6ecdeaa51fb81380b654dcded5d9b18cd7637d5c3ac22ee5033ea82c359",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/cache/ps5-eden-headless.18ed2b4d956a/source/src/dynarmic/src/dynarmic/ir/opcodes.inc",
+      "reviewed_before_sha256": [
+        "714f2cbf0d81049b2ec90773d02bc92578ced8f13a5598f770853fa20209427e",
+        "a5d857256ded0edfb5271ca183cd3c049d3984b04589135562c844877ac1420f",
+        "d8356dfdf9bbae118fa4879b41f8a91bda3dc1aad4e5dea7e47a872d9c7be599",
+        "714f2cbf0d81049b2ec90773d02bc92578ced8f13a5598f770853fa20209427e",
+        "abd93c198a2ed7fe8cc4da0e47bd202d1c4634380d7fb903fe4a036c168e6a51"
+      ]
+    },
+    {
+      "scope": "eden",
+      "relative": "src/dynarmic/src/dynarmic/ir/opt_passes.cpp",
+      "overlay": "overlay/eden/src/dynarmic/src/dynarmic/ir/opt_passes.cpp",
+      "pinned_sha256": "8d4522725d1fe8149a45ed181690ee9d6b32a719c1426832219d0dd0b8176028",
+      "native_baseline_sha256": "8d4522725d1fe8149a45ed181690ee9d6b32a719c1426832219d0dd0b8176028",
+      "final_sha256": "98a587abb3fdc3b2f2b769550fe1e5681ad81e3c1eba9105d7ba2dcc8430c7a7",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/cache/ps5-eden-headless.18ed2b4d956a/source/src/dynarmic/src/dynarmic/ir/opt_passes.cpp",
+      "reviewed_before_sha256": [
+        "130e5f762b239871855ae5788fe2bb3b22d72c834d8d11b48537106973ec97b9",
+        "671d6a15387a88467fbd1ef340897545a34431777391d561b7961bbcc56dea66",
+        "695b2d81bfdc8e681baafb4808ad6469bddd6119b0256cec4042752733f94535",
+        "d001326047a88929f8ca339f663f6d5c85c8cd7638d6ad999172c6a3e99c3157",
+        "671d6a15387a88467fbd1ef340897545a34431777391d561b7961bbcc56dea66",
+        "1c834826e6d2d03f0a5673e1e677092280231a88f24faba730b72660042a0c68"
+      ]
+    },
+    {
+      "scope": "eden",
+      "relative": "src/shader_recompiler/frontend/maxwell/translate/impl/load_store_local_shared.cpp",
+      "overlay": "overlay/eden/src/shader_recompiler/frontend/maxwell/translate/impl/load_store_local_shared.cpp",
+      "pinned_sha256": "376ab62bf0ca35b32ec8bb292c5a25ebb25b1842f881e6cbe74df3f36cd6ee48",
+      "native_baseline_sha256": "e30ca59503d1aee6d7f38a6b4d6d393dd133b8ae2e53f441156cf71975b861ab",
+      "final_sha256": "e30ca59503d1aee6d7f38a6b4d6d393dd133b8ae2e53f441156cf71975b861ab",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/cache/ps5-eden-headless.18ed2b4d956a/source/src/shader_recompiler/frontend/maxwell/translate/impl/load_store_local_shared.cpp",
+      "reviewed_before_sha256": [
+        "e30ca59503d1aee6d7f38a6b4d6d393dd133b8ae2e53f441156cf71975b861ab"
+      ]
+    },
+    {
+      "scope": "port",
+      "relative": "headless/CMakeLists.txt",
+      "overlay": "overlay/port/headless/CMakeLists.txt",
+      "pinned_sha256": "bac183a0e8bbd560d4a350856ff6899206e46b994a1e73b37b7c50407b44e118",
+      "native_baseline_sha256": "bac183a0e8bbd560d4a350856ff6899206e46b994a1e73b37b7c50407b44e118",
+      "final_sha256": "b4ab1cfe1c41fa400d3b9d2e71c50242f6f8cf0f092b5d6a580ba49dd92956c8",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/ProsperoEden/headless/CMakeLists.txt",
+      "reviewed_before_sha256": [
+        "42ff022543762c8ff29e3c9d023ebc516097f4f17dc733a1c0deeb08bd471b6c",
+        "98fe703c17bff0389dbd15d86cfb9c4affb0af32256025689bc358b743b0d33c"
+      ]
+    },
+    {
+      "scope": "port",
+      "relative": "headless/folder_game_entry.h",
+      "overlay": "overlay/port/headless/folder_game_entry.h",
+      "pinned_sha256": null,
+      "native_baseline_sha256": null,
+      "final_sha256": "91805d5298ae7c02cbb6486332279c0c592d66cc8f90025e32a0fbdb821999a6",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/ProsperoEden/headless/folder_game_entry.h",
+      "reviewed_before_sha256": [
+        "91805d5298ae7c02cbb6486332279c0c592d66cc8f90025e32a0fbdb821999a6"
+      ]
+    },
+    {
+      "scope": "port",
+      "relative": "headless/main.cpp",
+      "overlay": "overlay/port/headless/main.cpp",
+      "pinned_sha256": "df204763c4c2f060d533778f64f76e53a2cf21190c0e8158ca607d2e991b1ce2",
+      "native_baseline_sha256": "df204763c4c2f060d533778f64f76e53a2cf21190c0e8158ca607d2e991b1ce2",
+      "final_sha256": "3a44b1918f7871d8ff6ea17b55ba6435b4120524c03b44258b67b01a400181f8",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/ProsperoEden/headless/main.cpp",
+      "reviewed_before_sha256": [
+        "40b269f15156ed95afc23ba195c070aea61de06ea724506abe87f3cba0fbaae2",
+        "81432da4093797036a267969a4d799db07229a4f0a4da1669fe830751b85e73e",
+        "8d177639c35f7add760b80362d5bff41293dd121306d731128eb091590370f90",
+        "81432da4093797036a267969a4d799db07229a4f0a4da1669fe830751b85e73e"
+      ]
+    },
+    {
+      "scope": "port",
+      "relative": "headless/metadata_bridge.cpp",
+      "overlay": "overlay/port/headless/metadata_bridge.cpp",
+      "pinned_sha256": "aa073f0971b2d969c4535ffac76b819869d4aa57222cf700b594d5e0c60d40fd",
+      "native_baseline_sha256": "aa073f0971b2d969c4535ffac76b819869d4aa57222cf700b594d5e0c60d40fd",
+      "final_sha256": "2fa8338670f84fdc2b62e571053728905948938646477448c9868816b561964a",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/ProsperoEden/headless/metadata_bridge.cpp",
+      "reviewed_before_sha256": [
+        "2fa8338670f84fdc2b62e571053728905948938646477448c9868816b561964a"
+      ]
+    },
+    {
+      "scope": "port",
+      "relative": "headless/prosperoeden/eden_services.cpp",
+      "overlay": "overlay/port/headless/prosperoeden/eden_services.cpp",
+      "pinned_sha256": "f0057f9cd4869a22f0625548fb0e77a22edc46565f9ba0e43b510615a536fd33",
+      "native_baseline_sha256": "f0057f9cd4869a22f0625548fb0e77a22edc46565f9ba0e43b510615a536fd33",
+      "final_sha256": "ca612665043a7851c848eaaca305193edfb1209bc7cd7bc52f766322d67c7762",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/ProsperoEden/headless/prosperoeden/eden_services.cpp",
+      "reviewed_before_sha256": [
+        "ca612665043a7851c848eaaca305193edfb1209bc7cd7bc52f766322d67c7762"
+      ]
+    },
+    {
+      "scope": "port",
+      "relative": "headless/research/direct-loader-prototype/direct_loader_targets.cmake",
+      "overlay": "overlay/port/headless/research/direct-loader-prototype/direct_loader_targets.cmake",
+      "pinned_sha256": "51a04024517c19fa76b1b3d44551ac2ee8f2faa46c539d88f7487fc70a495297",
+      "native_baseline_sha256": "51a04024517c19fa76b1b3d44551ac2ee8f2faa46c539d88f7487fc70a495297",
+      "final_sha256": "b60172fde719ca20f3144e6f0835b10b0dfd549ca4db0a12e580f790a5419217",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/ProsperoEden/headless/research/direct-loader-prototype/direct_loader_targets.cmake",
+      "reviewed_before_sha256": [
+        "b60172fde719ca20f3144e6f0835b10b0dfd549ca4db0a12e580f790a5419217",
+        "ff3abecec84b07cb4b0497eadab5bef6fc724b1d388e77fbf602cd385d5b0f10"
+      ]
+    },
+    {
+      "scope": "port",
+      "relative": "headless/research/direct-loader-prototype/research_cpu_setting_lease.h",
+      "overlay": "overlay/port/headless/research/direct-loader-prototype/research_cpu_setting_lease.h",
+      "pinned_sha256": null,
+      "native_baseline_sha256": null,
+      "final_sha256": "8b046a80e3ec5ffb8c7d63d667e22dc7c4fbe85af2465938093d100b6f425656",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/ProsperoEden/headless/research/direct-loader-prototype/research_cpu_setting_lease.h",
+      "reviewed_before_sha256": [
+        "8b046a80e3ec5ffb8c7d63d667e22dc7c4fbe85af2465938093d100b6f425656"
+      ]
+    },
+    {
+      "scope": "port",
+      "relative": "headless/research/direct-loader-prototype/research_descriptor.cpp",
+      "overlay": "overlay/port/headless/research/direct-loader-prototype/research_descriptor.cpp",
+      "pinned_sha256": "20bca0cce845a14c4bdbf5733c979567d95bdabe75e7d169419cd0d8d7c39686",
+      "native_baseline_sha256": "20bca0cce845a14c4bdbf5733c979567d95bdabe75e7d169419cd0d8d7c39686",
+      "final_sha256": "1094d7a72e64cb5431ee7162bed3ce79191182c2c46436ccc216c8361aec6df4",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/ProsperoEden/headless/research/direct-loader-prototype/research_descriptor.cpp",
+      "reviewed_before_sha256": [
+        "1094d7a72e64cb5431ee7162bed3ce79191182c2c46436ccc216c8361aec6df4",
+        "14904650cd0704f63afdc11c478ff05d1241f584782493e2056396a83d3deb87"
+      ]
+    },
+    {
+      "scope": "port",
+      "relative": "headless/research/direct-loader-prototype/research_descriptor.h",
+      "overlay": "overlay/port/headless/research/direct-loader-prototype/research_descriptor.h",
+      "pinned_sha256": "4f310671e5af4d7471cbaead8b45ca8e32d5b34035f71227ccc09c902f4554da",
+      "native_baseline_sha256": "4f310671e5af4d7471cbaead8b45ca8e32d5b34035f71227ccc09c902f4554da",
+      "final_sha256": "fa98af8a1d12dc59cf28770912aa6196a1f8d216e1119c5d2857afa9f577f66c",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/ProsperoEden/headless/research/direct-loader-prototype/research_descriptor.h",
+      "reviewed_before_sha256": [
+        "9653042ebf9588858fd5fb5caf1fefd203385b35cc6de99c3af5b318c9bd8fb4",
+        "fa98af8a1d12dc59cf28770912aa6196a1f8d216e1119c5d2857afa9f577f66c"
+      ]
+    },
+    {
+      "scope": "port",
+      "relative": "headless/research/direct-loader-prototype/research_execution_profile.h",
+      "overlay": "overlay/port/headless/research/direct-loader-prototype/research_execution_profile.h",
+      "pinned_sha256": null,
+      "native_baseline_sha256": null,
+      "final_sha256": "40123d744e4a8a17af307d3649f47fe7263c38c1ff8a26e53054b943b214b7db",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/ProsperoEden/headless/research/direct-loader-prototype/research_execution_profile.h",
+      "reviewed_before_sha256": [
+        "40123d744e4a8a17af307d3649f47fe7263c38c1ff8a26e53054b943b214b7db"
+      ]
+    },
+    {
+      "scope": "port",
+      "relative": "headless/research/direct-loader-prototype/research_frontend.cpp",
+      "overlay": "overlay/port/headless/research/direct-loader-prototype/research_frontend.cpp",
+      "pinned_sha256": "82eb6eb4b3f5c082faff38cc05450e8ace4cd32307072d36373acca04abda090",
+      "native_baseline_sha256": "82eb6eb4b3f5c082faff38cc05450e8ace4cd32307072d36373acca04abda090",
+      "final_sha256": "9045450904547cae89e6e5d4fbd42de1c28bbd29f8c0a18a28ae90fbcd7849d9",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/ProsperoEden/headless/research/direct-loader-prototype/research_frontend.cpp",
+      "reviewed_before_sha256": [
+        "3e731b030aecc538aab5c1751e602e49207fcac0e6e628994da6d6eb12bddb14",
+        "86607f2e51a4e5d5ce6e47342763c57311a44e1c14522eda0370a81877cf7387",
+        "3e731b030aecc538aab5c1751e602e49207fcac0e6e628994da6d6eb12bddb14"
+      ]
+    },
+    {
+      "scope": "port",
+      "relative": "headless/research/direct-loader-prototype/research_frontend.h",
+      "overlay": "overlay/port/headless/research/direct-loader-prototype/research_frontend.h",
+      "pinned_sha256": "020032c74a6182a154175b58ba07089d7e27f57d6cc6eb9f65b2eaeeff96c44f",
+      "native_baseline_sha256": "020032c74a6182a154175b58ba07089d7e27f57d6cc6eb9f65b2eaeeff96c44f",
+      "final_sha256": "7afda6c5fba1541baec45d2ec7ea56357e33196f250c418164d789a37a666e52",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/ProsperoEden/headless/research/direct-loader-prototype/research_frontend.h",
+      "reviewed_before_sha256": [
+        "3db24881c1d648684fc38d1a6e4611eafafd4febf9b2d5b7acfcde0faf4a9b9d",
+        "9c8f7a64db8166d7f0e37b92c0ea1aadbfcec230eaa53968c47f32c13bba66c3",
+        "9c8f7a64db8166d7f0e37b92c0ea1aadbfcec230eaa53968c47f32c13bba66c3"
+      ]
+    },
+    {
+      "scope": "port",
+      "relative": "headless/research/direct-loader-prototype/research_npdm_snapshot.h",
+      "overlay": "overlay/port/headless/research/direct-loader-prototype/research_npdm_snapshot.h",
+      "pinned_sha256": null,
+      "native_baseline_sha256": null,
+      "final_sha256": "8f697b25c5b4d05a5c8ff745867841ccdaf29b1a4068cc3504c9f0ad5354c2b9",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/ProsperoEden/headless/research/direct-loader-prototype/research_npdm_snapshot.h",
+      "reviewed_before_sha256": [
+        "8f697b25c5b4d05a5c8ff745867841ccdaf29b1a4068cc3504c9f0ad5354c2b9"
+      ]
+    },
+    {
+      "scope": "port",
+      "relative": "headless/research/direct-loader-prototype/research_profile_lease.h",
+      "overlay": "overlay/port/headless/research/direct-loader-prototype/research_profile_lease.h",
+      "pinned_sha256": null,
+      "native_baseline_sha256": null,
+      "final_sha256": "5d587ad65abe2a53733c832a74f6d64775174e6a785bae2d4a3cae2e4b07913f",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/ProsperoEden/headless/research/direct-loader-prototype/research_profile_lease.h",
+      "reviewed_before_sha256": [
+        "5d587ad65abe2a53733c832a74f6d64775174e6a785bae2d4a3cae2e4b07913f",
+        "6496a9d42f75d9d293e091dc2c852ba1b65503736c66a8ee1c3279ad3c8a86b5"
+      ]
+    },
+    {
+      "scope": "port",
+      "relative": "headless/settings_store.h",
+      "overlay": "overlay/port/headless/settings_store.h",
+      "pinned_sha256": "651188654f1be077029cf9575aa1aacf7ac4fe7690e5b1e37188f5c386f3349e",
+      "native_baseline_sha256": "651188654f1be077029cf9575aa1aacf7ac4fe7690e5b1e37188f5c386f3349e",
+      "final_sha256": "1febd5e131e219a65967d7f00158731eeb6c078519631986e19e6416500a9af9",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/ProsperoEden/headless/settings_store.h",
+      "reviewed_before_sha256": [
+        "1febd5e131e219a65967d7f00158731eeb6c078519631986e19e6416500a9af9"
+      ]
+    },
+    {
+      "scope": "port",
+      "relative": "tools/build-headless-native.sh",
+      "overlay": "overlay/port/tools/build-headless-native.sh",
+      "pinned_sha256": "9dbbc4afcb0ccb979ce3cb6ca0ab65cf581b7b3bcbd3411e61e6b45478ac1736",
+      "native_baseline_sha256": "9dbbc4afcb0ccb979ce3cb6ca0ab65cf581b7b3bcbd3411e61e6b45478ac1736",
+      "final_sha256": "49783f2bd4a8fea3436c5bee6d6488d32982cc5dba2f257ae307af5934805869",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/ProsperoEden/tools/build-headless-native.sh",
+      "reviewed_before_sha256": [
+        "49783f2bd4a8fea3436c5bee6d6488d32982cc5dba2f257ae307af5934805869"
+      ]
+    },
+    {
+      "scope": "port",
+      "relative": "tools/prepare-build.sh",
+      "overlay": "overlay/port/tools/prepare-build.sh",
+      "pinned_sha256": "836028066bbe3af134ead207b01751ba15aed285c061281c855bda3c7c1317a2",
+      "native_baseline_sha256": "836028066bbe3af134ead207b01751ba15aed285c061281c855bda3c7c1317a2",
+      "final_sha256": "080346ed07a7a429ec78643de611a2a112789be2a5029eef077df7b1763caaa2",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/ProsperoEden/tools/prepare-build.sh",
+      "reviewed_before_sha256": [
+        "080346ed07a7a429ec78643de611a2a112789be2a5029eef077df7b1763caaa2"
+      ]
+    },
+    {
+      "scope": "eden",
+      "relative": "src/core/hle/kernel/svc/svc_thread.cpp",
+      "overlay": "overlay/eden/src/core/hle/kernel/svc/svc_thread.cpp",
+      "pinned_sha256": "40065e5b9e43ef998849999376da21bd8c4664f3a140b40006e7ab44834b459a",
+      "native_baseline_sha256": "40065e5b9e43ef998849999376da21bd8c4664f3a140b40006e7ab44834b459a",
+      "final_sha256": "1e6b7ae2d8479048d024c6099c46adef2bb72f90677f01b1e18f4e44207233d2",
+      "native_baseline_absolute_path": "/home/codexbuild/work/ProsperoCompound_Night/cache/ps5-eden-headless.18ed2b4d956a/source/src/core/hle/kernel/svc/svc_thread.cpp",
+      "reviewed_before_sha256": [
+        "40065e5b9e43ef998849999376da21bd8c4664f3a140b40006e7ab44834b459a"
+      ]
+    },
+    {
+      "scope": "eden",
+      "relative": "src/core/hle/service/am/service/self_controller.h",
+      "overlay": "overlay/eden/src/core/hle/service/am/service/self_controller.h",
+      "pinned_sha256": "cb4891f0000ba2b66a2ef72b19d60e780fc26124ea46dd5865c6ad3b6f3297ae",
+      "native_baseline_sha256": "cb4891f0000ba2b66a2ef72b19d60e780fc26124ea46dd5865c6ad3b6f3297ae",
+      "final_sha256": "305ae6addb72fd599bbf708e9fd2ec1439e2c84ef294c01a6998f7a34a1ccbcc",
+      "native_baseline_absolute_path": null,
+      "reviewed_before_sha256": [],
+      "gsv_research_source": "graphics-supervisor-startup-probe/tipc-request-probe/after"
+    },
+    {
+      "scope": "eden",
+      "relative": "src/core/hle/service/am/service/self_controller.cpp",
+      "overlay": "overlay/eden/src/core/hle/service/am/service/self_controller.cpp",
+      "pinned_sha256": "a5308b77313b7635d6a33642ffb9cbee2909b65a270b3fec22e53a60bfd06a16",
+      "native_baseline_sha256": "a5308b77313b7635d6a33642ffb9cbee2909b65a270b3fec22e53a60bfd06a16",
+      "final_sha256": "125133a3cca3aff281b4d5961baa64de20cb7b63a5b275a39b8aae5d6722ffb7",
+      "native_baseline_absolute_path": null,
+      "reviewed_before_sha256": [],
+      "gsv_research_source": "gsv-frame-context-prototype/after"
+    },
+    {
+      "scope": "eden",
+      "relative": "src/core/hle/service/am/service/research_graphics_bootstrap.h",
+      "overlay": "overlay/eden/src/core/hle/service/am/service/research_graphics_bootstrap.h",
+      "pinned_sha256": null,
+      "native_baseline_sha256": null,
+      "final_sha256": "8449f68cbfcc4939b80079e0a4986b6f05122ac0f87700e3227fd70c8974faa5",
+      "native_baseline_absolute_path": null,
+      "reviewed_before_sha256": [],
+      "gsv_research_source": "graphics-bootstrap-prototype/after"
+    },
+    {
+      "scope": "eden",
+      "relative": "src/core/hle/service/am/service/research_gsv_syncpoint_context.h",
+      "overlay": "overlay/eden/src/core/hle/service/am/service/research_gsv_syncpoint_context.h",
+      "pinned_sha256": null,
+      "native_baseline_sha256": null,
+      "final_sha256": "d2879211a946cbb87d0f15f079f2746d57b0d66aea8fab59cdddbf53ae987e7d",
+      "native_baseline_absolute_path": null,
+      "reviewed_before_sha256": [],
+      "gsv_research_source": "gsv-syncpoint-context-prototype/after"
+    },
+    {
+      "scope": "eden",
+      "relative": "src/core/hle/service/am/service/research_syncpoint_pool.h",
+      "overlay": "overlay/eden/src/core/hle/service/am/service/research_syncpoint_pool.h",
+      "pinned_sha256": null,
+      "native_baseline_sha256": null,
+      "final_sha256": "cba558740c5b70be722d9497204d2680f54714eb3cdf8bdf381a1a5e7b55d35d",
+      "native_baseline_absolute_path": null,
+      "reviewed_before_sha256": [],
+      "gsv_research_source": "gsv-syncpoint-context-prototype/after"
+    },
+    {
+      "scope": "eden",
+      "relative": "src/core/hle/service/am/service/research_native_memory.h",
+      "overlay": "overlay/eden/src/core/hle/service/am/service/research_native_memory.h",
+      "pinned_sha256": null,
+      "native_baseline_sha256": null,
+      "final_sha256": "553dff3090ffb3c0ddea15c89ace9a33cbbefe33fb94c7a11bcd6d8f8423a5bc",
+      "native_baseline_absolute_path": null,
+      "reviewed_before_sha256": [],
+      "gsv_research_source": "gsv-native-backing-prototype/after"
+    },
+    {
+      "scope": "eden",
+      "relative": "src/core/hle/service/nvdrv/nvdrv_interface.h",
+      "overlay": "overlay/eden/src/core/hle/service/nvdrv/nvdrv_interface.h",
+      "pinned_sha256": "cdf8639600f215517199a0b414d5c2deddff519dc4c92db90a14b39c0ee1c1fc",
+      "native_baseline_sha256": "cdf8639600f215517199a0b414d5c2deddff519dc4c92db90a14b39c0ee1c1fc",
+      "final_sha256": "cc83a05c740290338fe09ef0df512d121a113ac38d72d95026f86809fd70bae3",
+      "native_baseline_absolute_path": null,
+      "reviewed_before_sha256": [],
+      "gsv_research_source": "gsv-nvdrv-session-prototype/after"
+    },
+    {
+      "scope": "eden",
+      "relative": "src/core/hle/service/nvdrv/nvdrv_interface.cpp",
+      "overlay": "overlay/eden/src/core/hle/service/nvdrv/nvdrv_interface.cpp",
+      "pinned_sha256": "f8a2fa034225dfbf2706d961357264d84cb8b0b9d2dd1fd02b177de7163073d4",
+      "native_baseline_sha256": "f8a2fa034225dfbf2706d961357264d84cb8b0b9d2dd1fd02b177de7163073d4",
+      "final_sha256": "98f5107be1c65e4ef7d076945391091be8cba2b83a91d379bf1d0740630c4538",
+      "native_baseline_absolute_path": null,
+      "reviewed_before_sha256": [],
+      "gsv_research_source": "gsv-nvdrv-session-prototype/after"
+    },
+    {
+      "scope": "eden",
+      "relative": "src/core/hle/service/nvdrv/core/nvmap.h",
+      "overlay": "overlay/eden/src/core/hle/service/nvdrv/core/nvmap.h",
+      "pinned_sha256": "caff84fe07fbbc814f753e1c1879831c5984415f3744d322a46719a8423ad8cb",
+      "native_baseline_sha256": "caff84fe07fbbc814f753e1c1879831c5984415f3744d322a46719a8423ad8cb",
+      "final_sha256": "202c8c393dcfd1c8019d27ec5d0ccb4971f384580718d0a9832c00387046ac29",
+      "native_baseline_absolute_path": null,
+      "reviewed_before_sha256": [],
+      "gsv_research_source": "gsv-native-backing-prototype/after"
+    },
+    {
+      "scope": "eden",
+      "relative": "src/core/hle/service/nvdrv/core/nvmap.cpp",
+      "overlay": "overlay/eden/src/core/hle/service/nvdrv/core/nvmap.cpp",
+      "pinned_sha256": "5ff0ec4fb3f6e6f2860a2c92260d718c7104a558a2810473e243461964987409",
+      "native_baseline_sha256": "5ff0ec4fb3f6e6f2860a2c92260d718c7104a558a2810473e243461964987409",
+      "final_sha256": "91bac8fb56ba4a8117f47deeeafd4515278b85bdbcbe0809d8d07f940c36573b",
+      "native_baseline_absolute_path": null,
+      "reviewed_before_sha256": [],
+      "gsv_research_source": "gsv-native-backing-prototype/after"
+    },
+    {
+      "scope": "eden",
+      "relative": "src/core/hle/service/nvdrv/core/container.h",
+      "overlay": "overlay/eden/src/core/hle/service/nvdrv/core/container.h",
+      "pinned_sha256": "56fe224bf2c4062e3c2d6acc1610644e83bd404680c162fbd6eeecc0d3461391",
+      "native_baseline_sha256": "56fe224bf2c4062e3c2d6acc1610644e83bd404680c162fbd6eeecc0d3461391",
+      "final_sha256": "ced5b065821a104ace010a489ba768a450e9798693cbd12ddd37a7976f3cc9d6",
+      "native_baseline_absolute_path": null,
+      "reviewed_before_sha256": [],
+      "gsv_research_source": "gsv-native-backing-prototype/after"
+    },
+    {
+      "scope": "eden",
+      "relative": "src/common/host_memory.h",
+      "overlay": "overlay/eden/src/common/host_memory.h",
+      "pinned_sha256": "585c5621c4bd5c63dac43e14efa90ff60fbdc7812caa095147becc072b69f182",
+      "native_baseline_sha256": "585c5621c4bd5c63dac43e14efa90ff60fbdc7812caa095147becc072b69f182",
+      "final_sha256": "0b0721233a2ba958784e55b9e2a0eae3286962ccc1ccfb6211fa309c02e3f3b5",
+      "native_baseline_absolute_path": null,
+      "reviewed_before_sha256": [],
+      "gsv_research_source": "smmu-physical-coverage-prototype/after"
+    },
+    {
+      "scope": "eden",
+      "relative": "src/common/sparse_large_vector.h",
+      "overlay": "overlay/eden/src/common/sparse_large_vector.h",
+      "pinned_sha256": "9054150069ffbe0f7a16b99d8928508dcdca8810a930c8cd1926ed33daa5820e",
+      "native_baseline_sha256": "9054150069ffbe0f7a16b99d8928508dcdca8810a930c8cd1926ed33daa5820e",
+      "final_sha256": "f7f300bfbe540632813f0e96788f094b88a1bf7e09f7e9a6c489275198efe8c2",
+      "native_baseline_absolute_path": null,
+      "reviewed_before_sha256": [],
+      "gsv_research_source": "smmu-physical-coverage-prototype/after"
+    },
+    {
+      "scope": "eden",
+      "relative": "src/core/device_memory_manager.inc",
+      "overlay": "overlay/eden/src/core/device_memory_manager.inc",
+      "pinned_sha256": "68a7b03ef38badbcd09c3ac1baf159dde502575db40d49cd2d9f4032496f79f9",
+      "native_baseline_sha256": "68a7b03ef38badbcd09c3ac1baf159dde502575db40d49cd2d9f4032496f79f9",
+      "final_sha256": "36d4c14109df0a37a1847bb6e261eca8f9746d93bc95d01cf675f80c22924cac",
+      "native_baseline_absolute_path": null,
+      "reviewed_before_sha256": [],
+      "gsv_research_source": "smmu-physical-coverage-prototype/after"
+    }
+  ],
+  "artifacts": {
+    "replay_native.py": "279fc3f2b95ba285fc09bd0b830ee284fc732e7521e1e4458965bfc032bb613e",
+    "aggregate-eden-from-pinned.patch": "64862adb4d7b3d99aa23a9b7a4a2d3bdd92cc819fae816c8519a6aa8be8eba93",
+    "aggregate-port-from-native.patch": "cd98b240d1e92076907d7320e784c6ce4c2c0d5d8ade394e95eac05556ab3186",
+    "graphics-fixed-policy.patch": "03f4e36df98ae7add255b347944374c706ade4b7d72ebe27e6e24bba81e19d1c",
+    "virtual-core.patch": "b1afa8e827a7b5496d027895529875914f1e7f6c511b7f0e7c3ab715dbb54c36",
+    "ldset32.patch": "2eafe88c6e649a56b128b9a24ceabda021cf9fb9d38d94d392d8e8ff0734d810",
+    "ldclr-startup-probe.patch": "4fe7a922e98a6de52cc3a9b5ad85645ce74814f299b35e010c031e56cf7a07c9",
+    "ldadd64-startup-probe.patch": "bdc6968f7d57253bcb11221ca413f650d35f0400ba5e787232be6a96b53a5df4",
+    "lse-family-startup-probe.patch": "ffb6eb9e1a2ec1b70b074da92085facef7d0ed9f228688bb3b1cf01273e073bd",
+    "narrow-cas-startup-probe.patch": "fba49aea607e50cc6fa9260988cc458e3f1decb55c4511c3a85040cb190bfdd4",
+    "narrow-lse-startup-probe.patch": "d28a7e0fd0e7f53949c33e8c14013662a9c2fbf16c8d0e53977f5d5683a942da",
+    "research-heap-capacity.patch": "96e9d216e876bb90d6e230f7a8afe25c6dbd925e81fb7603db6b85a0d4a16e91",
+    "remote-overlap-type-proof.json": "2e6571b127d03c82b5ed4687e5ce0f7ed04be4d5579ccd857cc9a4912a002981"
+  },
+  "reviewed_before_manifests": [
+    {
+      "path": "/mnt/e/Dev/ProsperoCompoundBuild/night/native-migration-preflight/versions/cas32-allorders-e4f813b5/bundle/manifest.json",
+      "sha256": "82eb4f4e54d5e72024113d589381430b562e7f89b3d1c2ab08351c3061e5c9e3"
+    },
+    {
+      "path": "/mnt/e/Dev/ProsperoCompoundBuild/night/native-migration-preflight/versions/ldapr-strict-80606a6e/bundle/manifest.json",
+      "sha256": "a37ed3843c22e9eb0caa0c01235f2de1e75e73854429a8a75a056f123711a736"
+    },
+    {
+      "path": "/mnt/e/Dev/ProsperoCompoundBuild/night/native-migration-preflight/versions/ldadd-allfeatures-1a1f76ab/bundle/manifest.json",
+      "sha256": "4c1b767c5bda96cfcf4ad118eb663195bd30f14415a92aca7afe0128c0624762"
+    },
+    {
+      "path": "/mnt/e/Dev/ProsperoCompoundBuild/night/native-migration-preflight/versions/native-ui-cas64-28166225/bundle/manifest.json",
+      "sha256": "d255be122acbfbc274d8e7771a3cc68fca34f577499c767094a0a14f2e2f29f5"
+    },
+    {
+      "path": "/mnt/e/Dev/ProsperoCompoundBuild/night/native-migration-preflight/versions/native-library-xpac-applet2/bundle/manifest.json",
+      "sha256": "b29d0c19da7bbc3e45d6fbdf52e59f281e72a9ec6c5ca84e53c716323d710f04"
+    },
+    {
+      "path": "/mnt/e/Dev/ProsperoCompoundBuild/night/native-migration-preflight/versions/native-mkw-am-vcore-ldset/bundle/manifest.json",
+      "sha256": "916b1c5dc9bfa7d5cb6d791e019fa3596fe9f030f7c545e6026c8a6a57133da5"
+    },
+    {
+      "path": "/mnt/e/Dev/ProsperoCompoundBuild/night/native-migration-preflight/versions/native-mkw-lse-complete/bundle/manifest.json",
+      "sha256": "2d03a1e1da7b275449a058974cac64435fdb1ba683bbe1a26afc8eaf79365032"
+    }
+  ],
+  "ldadd_delta_sha256": "1a1f76ab4124928e950e8dcb0f1377cb15f5c24628d34162a817ce1abeed0bbd",
+  "cas64_delta_sha256": "2816622580a2625c448982792c297902d322f404d5123c2f0009c99a8cf007c2",
+  "library_ui_patch_sha256": "1e00c0bc37c931b4477970c45a885de532e2e36063ddc02e47dd178f48482080",
+  "info33_delta_sha256": "60af6be4ab54f18835d994cc52d2d7bff084d38ce018c1752fc2fe52896a07ec",
+  "typed_address_warning_fix": "Explicit nonnegative ptrdiff_t to size_t conversion; no behavior or layout change",
+  "xpac_patch_sha256": "6af8728a3439976040d6a00059ffe63608afe12eb15ce8e89a4eb5d2c739a6b4",
+  "applet10_attribute2_patch_sha256": "d84dddad001ecaa693847c41398671122dd61347beab84076f261b9e889e66da",
+  "experimental_graphics_policy": "Research-only fixed10/1/1 state, not a retail quota model; no overclock enable success",
+  "virtual_core_policy": "Existing64 virtual IDs to4 physical scheduler IDs, mask-authorized verified research process only",
+  "ldset32_patch_sha256": "2eafe88c6e649a56b128b9a24ceabda021cf9fb9d38d94d392d8e8ff0734d810",
+  "ldset_microproof_sha256": "b2f6b40468e87d1bcfc2542e8c774b045eb073a1bb410b5aadee271676094f61",
+  "lse_microproof_sha256": "f1f240fce7aa4dc305dabba81abbea5a7e0f34982135f3fc13efc147a5740dc5",
+  "memory_layout_policy": "12 GiB HLE layout only under prepared execute + verified actual exact-title NPDM + opt-in remote/strict profiles; heap VA16GiB policy gated in actual process. Physical backing/accounting retained; no PS5 full-load headroom proof.",
+  "strict_warning_fix": "Explicit unsigned comparison preserving short-circuit and all overflow guards; normal Werror remains active",
+  "gsv_research": {
+    "added": "2026-10-29",
+    "commands": "ISelfController2000 -> GSV 4/11/101/111/112/114/115/201/202/1101/1102/1111/1112/1402",
+    "note": "1101/1102/1111/1112 follow firmware 0400000000000081 semantics; driver calls not emulated; no frame presentation."
+  }
+}

@@ -1,0 +1,42 @@
+diff --git a/tools/prepare-vulkan-port.py b/tools/prepare-vulkan-port.py
+index 84613fa..f7bc472 100644
+--- a/tools/prepare-vulkan-port.py
++++ b/tools/prepare-vulkan-port.py
+@@ -1938,6 +1938,37 @@ probes = {
+          '    has_custom_border_colors = samples_border && device.IsCustomBorderColorUsable();'),
+     ],
+ }
++# Small ASTC textures (4 Mpx or less over all layers: characters, items, signs) are decoded and
++# compressed to BC1/BC3 on the GPU, in the frame that uploads them, even in the CPU-asynchronous
++# mode: converted in the background they showed black until their turn came, behind a course's
++# terrain arrays (68 jobs each), and converted in place they cost races a quarter of their frame
++# rate. The large ones keep the CPU path, a layer at a time.
++probes['vk_texture_cache'] += [
++    ('    return Settings::values.accelerate_astc.GetValue() == Settings::AstcDecodeMode::Gpu &&\n'
++     '           Settings::values.astc_recompression.GetValue() != Settings::AstcRecompression::Uncompressed;\n',
++     '    const bool small = u64{info.size.width} * info.size.height * u64(info.resources.layers) <= (u64{4} << 20);\n'
++     '    return (Settings::values.accelerate_astc.GetValue() == Settings::AstcDecodeMode::Gpu ||\n'
++     '            (small && Settings::values.accelerate_astc.GetValue() == Settings::AstcDecodeMode::CpuAsynchronous)) &&\n'
++     '           Settings::values.astc_recompression.GetValue() != Settings::AstcRecompression::Uncompressed;\n'),
++    ('        case Settings::AstcDecodeMode::CpuAsynchronous:\n'
++     '            flags |= VideoCommon::ImageFlagBits::AsynchronousDecode;\n',
++     '        case Settings::AstcDecodeMode::CpuAsynchronous:\n'
++     '            flags |= WillUseGpuBcnTranscode(runtime->device, info)\n'
++     '                         ? VideoCommon::ImageFlagBits::AcceleratedUpload\n'
++     '                         : VideoCommon::ImageFlagBits::AsynchronousDecode;\n'),
++    # A transcode decodes into an RGBA copy of the whole image (4 bytes a pixel, every level) that
++    # lives until the GPU has used it. A course loading made hundreds in one frame, which held 6.7 GB
++    # of the pool the console's GPU shares with the CPU, and the next request found none. At 16 the
++    # earlier ones are finished and freed first: a wait for the GPU while a course loads.
++    ('    constexpr VkFormat DecodeFormat = VK_FORMAT_A8B8G8R8_UNORM_PACK32;\n    PendingTranscode pending{',
++     '    if (pending_transcodes.size() >= 16) {\n'
++     '        scheduler.Finish();\n'
++     '        while (!pending_transcodes.empty() && scheduler.IsFree(pending_transcodes.front().tick)) {\n'
++     '            pending_transcodes.pop_front();\n'
++     '        }\n'
++     '    }\n'
++     '    constexpr VkFormat DecodeFormat = VK_FORMAT_A8B8G8R8_UNORM_PACK32;\n    PendingTranscode pending{'),
++]
+ for name, index, expected in (
+     ('vk_fence_manager', 6, 1), ('vk_buffer_cache', 7, 3),
+     ('vk_texture_cache', 8, 1), ('vk_swapchain', 9, 6),

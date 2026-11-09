@@ -1,0 +1,184 @@
+JIT slow paths into cold chunks, on by default (EDEN_JIT_COLD=0 turns them off).
+A block's deferred emits (fastmem/page-table fallbacks, FP NaN and saturation paths) were written
+right after its hot code, so hot code was diluted and scattered: on the PS5 lab, OOT's critical
+cores ran JIT code at IPC 0.64 with 44% of cycles starved for instructions, only 26% of uops from
+the op cache, and half their JIT time spread over 581 KiB of 65%-used lines on 1,005 pages
+(coordination/notes/lab-frontend.md). With the switch on, slow paths go into 256 KiB chunks
+reserved at the hot frontier, and hot code continues after each chunk. Committed memory still grows
+in order (a chunk is committed when reserved). Only with a separate writable view (cold code is
+written behind the frontier). A block's registered size is its hot part. ClearCache resets the
+chunk (headless/jit-permissions.inc). EdenJitColdOverride() lets a test driver flip it together with a
+full JIT clear (live A/B in one session).
+Measured: lab OOT ABBA 33.1/33.2 -> 35.1/35.6 fps; Pro OOT (pinned at 30 fps) cores 0-2 busy 67.0/65.1% -> 61.1/61.4%.
+--- a/src/dynarmic/src/dynarmic/backend/x64/a32_emit_x64.cpp
++++ b/src/dynarmic/src/dynarmic/backend/x64/a32_emit_x64.cpp
+@@ -177,12 +177,15 @@
+     code.mov(rbp, code.qword[rsp + ABI_SHADOW_SPACE + offsetof(StackLayout, abi_base_pointer)]);
+     EmitTerminal(block.terminal, ctx.Location().SetSingleStepping(false), ctx.IsSingleStep());
+     code.int3();
+-
+-    for (auto& deferred_emit : ctx.deferred_emits)
++    const CodePtr hot_end = ctx.deferred_emits.empty() ? code.getCurr() : code.BeginColdCode();
++    for (auto& deferred_emit : ctx.deferred_emits) {
++        code.ColdCodeStep();
+         deferred_emit();
++    }
+     code.int3();
+-
+-    const size_t size = size_t(code.getCurr() - entrypoint);
++    // With cold code the block's registered size is its hot part only.
++    const bool cold = !ctx.deferred_emits.empty() && code.EndColdCode();
++    const size_t size = size_t((cold ? static_cast<const u8*>(hot_end) : code.getCurr<const u8*>()) - static_cast<const u8*>(entrypoint));
+ 
+     const A32::LocationDescriptor descriptor{block.Location()};
+     const A32::LocationDescriptor end_location{block.EndLocation()};
+--- a/src/dynarmic/src/dynarmic/backend/x64/a64_emit_x64.cpp
++++ b/src/dynarmic/src/dynarmic/backend/x64/a64_emit_x64.cpp
+@@ -150,11 +150,15 @@
+     code.mov(rbp, code.qword[rsp + ABI_SHADOW_SPACE + offsetof(StackLayout, abi_base_pointer)]);
+     EmitTerminal(block.terminal, ctx.Location().SetSingleStepping(false), ctx.IsSingleStep());
+     code.int3();
+-    for (auto& deferred_emit : ctx.deferred_emits)
++    const CodePtr hot_end = ctx.deferred_emits.empty() ? code.getCurr() : code.BeginColdCode();
++    for (auto& deferred_emit : ctx.deferred_emits) {
++        code.ColdCodeStep();
+         deferred_emit();
++    }
+     code.int3();
+-
+-    const size_t size = size_t(code.getCurr() - entrypoint);
++    // With cold code the block's registered size is its hot part only.
++    const bool cold = !ctx.deferred_emits.empty() && code.EndColdCode();
++    const size_t size = size_t((cold ? static_cast<const u8*>(hot_end) : code.getCurr<const u8*>()) - static_cast<const u8*>(entrypoint));
+ 
+     const A64::LocationDescriptor descriptor{block.Location()};
+     const A64::LocationDescriptor end_location{block.EndLocation()};
+--- a/src/dynarmic/src/dynarmic/backend/x64/block_of_code.cpp
++++ b/src/dynarmic/src/dynarmic/backend/x64/block_of_code.cpp
+@@ -22,6 +22,7 @@
+ #endif
+ 
+ #include <array>
++#include <cstdlib>
+ #include <cstring>
+ 
+ #include "common/assert.h"
+@@ -470,4 +471,68 @@
+     nop(size - current_size);
+ }
+ 
++std::atomic<int>& EdenJitColdOverride() {
++    static std::atomic<int> value{-1};  // -1: EDEN_JIT_COLD decides
++    return value;
++}
++
++namespace {
++// On by default (measured: lab +6.7% fps in OOT, Pro -7% CPU time on the critical cores); EDEN_JIT_COLD=0
++// turns cold chunks off. Read at the first block, after
++// the console's dev settings (env=...) are in the environment.
++bool ColdCodeEnabled() {
++    static const bool enabled = [] {
++        const char* value = std::getenv("EDEN_JIT_COLD");
++        return value == nullptr || value[0] != '0';
++    }();
++    // A live override (EdenJitColdOverride, set before a JIT clear by a test driver) wins.
++    const int live = EdenJitColdOverride().load(std::memory_order_relaxed);
++    return live < 0 ? enabled : live != 0;
++}
++constexpr size_t ColdChunk = 256 * 1024;  // one reservation in the code stream
++constexpr size_t ColdSlack = 8 * 1024;    // more than any single deferred emit
++}  // namespace
++
++CodePtr BlockOfCode::BeginColdCode() {
++    const u8* const hot_end = getCurr<const u8*>();
++    // Cold code is written behind the frontier, so only through a separate writable view.
++    cold_active = ColdCodeEnabled() && prelude_complete && hasWritableAlias();
++    writing_cold = false;
++    hot_resume = hot_end;
++    ColdCodeStep();
++    return hot_end;
++}
++
++void BlockOfCode::ColdCodeStep() {
++    if (!cold_active) return;
++    if (writing_cold) cold_ptr = getCurr<const u8*>();
++    if (cold_ptr && size_t(cold_end - cold_ptr) >= ColdSlack) {
++        if (!writing_cold) SetCodePtr(cold_ptr);
++        writing_cold = true;
++        return;
++    }
++    // A new chunk at the hot frontier; hot code continues after it. Near the end of the cache
++    // the rest of this block's slow paths stay inline, as without cold code.
++    SetCodePtr(hot_resume);
++    writing_cold = false;
++    if (size_t(&top_[maxSize_] - hot_resume) < ColdChunk + 2 * 1024 * 1024) {
++        cold_active = false;
++        return;
++    }
++    EnsureMemoryCommitted(ColdChunk + 1024 * 1024);
++    cold_ptr = hot_resume;
++    cold_end = hot_resume + ColdChunk;
++    hot_resume = cold_end;
++    writing_cold = true;
++}
++
++bool BlockOfCode::EndColdCode() {
++    if (!cold_active) return false;
++    if (writing_cold) cold_ptr = getCurr<const u8*>();
++    ASSERT(cold_ptr <= cold_end);
++    SetCodePtr(hot_resume);
++    cold_active = writing_cold = false;
++    return true;
++}
++
+ }  // namespace Dynarmic::Backend::X64
+--- a/src/dynarmic/src/dynarmic/backend/x64/block_of_code.h
++++ b/src/dynarmic/src/dynarmic/backend/x64/block_of_code.h
+@@ -9,6 +9,7 @@
+ #pragma once
+ 
+ #include <array>
++#include <atomic>
+ #include <functional>
+ #include <memory>
+ #include <type_traits>
+@@ -30,6 +31,10 @@
+ 
+ using CodePtr = const void*;
+ 
++/// Cold code (patch 0202) for blocks compiled from now on: -1 = EDEN_JIT_COLD decides, 0 off, 1 on. Changed
++/// only together with a full JIT clear (live A/B, headless/dynarmic/jit_impl.inc).
++std::atomic<int>& EdenJitColdOverride();
++
+ struct RunCodeCallbacks {
+     ArgCallback LookupBlock;
+     ArgCallback AddTicks;
+@@ -143,6 +148,14 @@
+     void SetCodePtr(CodePtr code_ptr);
+     void EnsurePatchLocationSize(CodePtr begin, size_t size);
+ 
++    /// EDEN_JIT_COLD=1: a block's slow paths (deferred emits) go into cold chunks reserved in the
++    /// code stream instead of right after its hot code, so hot code stays dense in the caches.
++    /// BeginColdCode returns where the block's hot code ends; ColdCodeStep goes before each
++    /// deferred emit; EndColdCode returns to the hot frontier (true if cold code was used).
++    CodePtr BeginColdCode();
++    void ColdCodeStep();
++    bool EndColdCode();
++
+     static const Xbyak::Reg64 ABI_JIT_PTR;
+     // ABI registers
+ #ifdef _WIN32
+@@ -180,6 +193,13 @@
+     RunCodeFuncType step_code = nullptr;
+     RunCodeCallbacks cb;
+     CodePtr code_begin = nullptr;
++    // Cold code (EDEN_JIT_COLD): the current chunk's next free byte and end, and where hot code
++    // resumes after a block's slow paths. Reset by ClearCache (headless/jit-permissions.inc).
++    const u8* cold_ptr = nullptr;
++    const u8* cold_end = nullptr;
++    const u8* hot_resume = nullptr;
++    bool cold_active = false;
++    bool writing_cold = false;
+ #ifdef _WIN32
+     size_t committed_size = 0;
+ #endif

@@ -1,0 +1,11 @@
+{
+    "file_format_version": "1.2.0",
+    "layer": {
+        "name": "VK_LAYER_SCOUT_vkmem",
+        "type": "GLOBAL",
+        "library_path": "./libvkmem.so",
+        "api_version": "1.4.0",
+        "implementation_version": "1",
+        "description": "lever-scout: live device memory per call stack"
+    }
+}

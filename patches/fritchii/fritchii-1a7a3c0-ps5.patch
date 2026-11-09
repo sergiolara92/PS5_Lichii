@@ -1,0 +1,231 @@
+diff --color -ruN a/src/core/CMakeLists.txt b/src/core/CMakeLists.txt
+--- a/src/core/CMakeLists.txt	2026-10-30 15:22:59.088995100 -0400
++++ b/src/core/CMakeLists.txt	2026-10-30 15:23:03.397039418 -0400
+@@ -1140,6 +1140,8 @@
+     launch_timestamp_cache.h
+     loader/deconstructed_rom_directory.cpp
+     loader/deconstructed_rom_directory.h
++    loader/development_factory.cpp
++    loader/development_factory.h
+     loader/kip.cpp
+     loader/kip.h
+     loader/loader.cpp
+diff --color -ruN a/src/core/file_sys/fsa/fs_i_file.h b/src/core/file_sys/fsa/fs_i_file.h
+--- a/src/core/file_sys/fsa/fs_i_file.h	2026-10-30 15:22:59.091995131 -0400
++++ b/src/core/file_sys/fsa/fs_i_file.h	2026-10-30 15:22:59.104995265 -0400
+@@ -6,12 +6,14 @@
+ 
+ #pragma once
+ 
++#include "common/logging.h"
+ #include "common/overflow.h"
+ #include "core/file_sys/errors.h"
+ #include "core/file_sys/fs_file.h"
+ #include "core/file_sys/fs_filesystem.h"
+ #include "core/file_sys/fs_operate_range.h"
+ #include "core/file_sys/vfs/vfs.h"
++#include "core/file_sys/vfs/vfs_read_error.h"
+ #include "core/file_sys/vfs/vfs_types.h"
+ #include "core/hle/result.h"
+ 
+@@ -128,8 +130,15 @@
+ 
+ private:
+     Result DoRead(size_t* out, s64 offset, void* buffer, size_t size, const ReadOption& option) {
+-        const auto read_size = backend->Read(static_cast<u8*>(buffer), size, offset);
+-        *out = read_size;
++        try {
++            const auto read_size = backend->Read(static_cast<u8*>(buffer), size, offset);
++            *out = read_size;
++        } catch (const VfsReadError& error) {
++            *out = 0;
++            LOG_ERROR(Service_FS, "VFS file read failed at offset={:#x}, length={}: {}",
++                      offset, size, error.what());
++            R_RETURN(ResultUnexpectedInCompressedStorageA);
++        }
+ 
+         R_SUCCEED();
+     }
+diff --color -ruN a/src/core/file_sys/vfs/vfs_read_error.h b/src/core/file_sys/vfs/vfs_read_error.h
+--- a/src/core/file_sys/vfs/vfs_read_error.h	1969-12-31 19:00:00.000000000 -0500
++++ b/src/core/file_sys/vfs/vfs_read_error.h	2026-10-30 15:22:59.100995224 -0400
+@@ -0,0 +1,14 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++#pragma once
++
++#include <stdexcept>
++
++namespace FileSys {
++// A VFS backend could not produce valid requested bytes. This is distinct from
++// an ordinary short read/EOF. IPC read boundaries translate only this category
++// into an FS error; unrelated host exceptions retain their original behavior.
++class VfsReadError : public std::runtime_error {
++public:
++    using std::runtime_error::runtime_error;
++};
++} // namespace FileSys
+diff --color -ruN a/src/core/hle/service/filesystem/fsp/fs_i_storage.cpp b/src/core/hle/service/filesystem/fsp/fs_i_storage.cpp
+--- a/src/core/hle/service/filesystem/fsp/fs_i_storage.cpp	2026-10-30 15:22:59.094995162 -0400
++++ b/src/core/hle/service/filesystem/fsp/fs_i_storage.cpp	2026-10-30 15:22:59.106995286 -0400
+@@ -9,6 +9,7 @@
+ #include <thread>
+ 
+ #include "core/file_sys/errors.h"
++#include "core/file_sys/vfs/vfs_read_error.h"
+ #include "core/hle/service/cmif_serialization.h"
+ #include "core/hle/service/filesystem/fsp/fs_i_storage.h"
+ 
+@@ -44,7 +45,13 @@
+                                               1'000'000'000 / ReadBytesPerSecond};
+ 
+     // Read the data from the Storage backend
+-    backend->Read(out_bytes.data(), length, offset);
++    try {
++        backend->Read(out_bytes.data(), length, offset);
++    } catch (const FileSys::VfsReadError& error) {
++        LOG_ERROR(Service_FS, "VFS storage read failed at offset={:#x}, length={}: {}",
++                  offset, length, error.what());
++        R_RETURN(FileSys::ResultUnexpectedInCompressedStorageA);
++    }
+ 
+     R_SUCCEED();
+ }
+diff --color -ruN a/src/core/loader/development_factory.cpp b/src/core/loader/development_factory.cpp
+--- a/src/core/loader/development_factory.cpp	1969-12-31 19:00:00.000000000 -0500
++++ b/src/core/loader/development_factory.cpp	2026-10-30 15:22:59.101995234 -0400
+@@ -0,0 +1,66 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++#include "core/loader/development_factory.h"
++
++#include <limits>
++#include <mutex>
++#include <stdexcept>
++#include <utility>
++#include "core/loader/loader.h"
++
++namespace Loader {
++namespace {
++struct DevelopmentRegistry {
++    std::mutex mutex;
++    DevelopmentFactory factory;
++    u64 sequence = 0;
++    u64 owner = 0;
++};
++DevelopmentRegistry& Registry() {
++    static DevelopmentRegistry registry;
++    return registry;
++}
++} // namespace
++
++u64 InstallDevelopmentFactory(DevelopmentFactory factory) {
++    auto& registry = Registry();
++    DevelopmentFactory displaced;
++    u64 token;
++    {
++        std::lock_guard lock{registry.mutex};
++        if (registry.sequence == std::numeric_limits<u64>::max())
++            throw std::overflow_error("Development factory ownership tokens exhausted");
++        token = ++registry.sequence;
++        displaced.swap(registry.factory);
++        registry.factory.swap(factory);
++        registry.owner = token;
++    }
++    // Captured objects may reenter the registry when destroyed.
++    return token;
++}
++
++bool RemoveDevelopmentFactory(u64 token) {
++    auto& registry = Registry();
++    DevelopmentFactory displaced;
++    {
++        std::lock_guard lock{registry.mutex};
++        if (token == 0 || token != registry.owner) return false;
++        displaced.swap(registry.factory);
++        registry.owner = 0;
++    }
++    return true;
++}
++
++std::unique_ptr<AppLoader> TryDevelopmentFactory(Core::System& system,
++                                                FileSys::VirtualFile file,
++                                                u64 program_id,
++                                                std::size_t program_index) {
++    if (!file) return {};
++    DevelopmentFactory factory;
++    {
++        auto& registry = Registry();
++        std::lock_guard lock{registry.mutex};
++        factory = registry.factory;
++    }
++    return factory ? factory(system, std::move(file), program_id, program_index) : nullptr;
++}
++} // namespace Loader
+diff --color -ruN a/src/core/loader/development_factory.h b/src/core/loader/development_factory.h
+--- a/src/core/loader/development_factory.h	1969-12-31 19:00:00.000000000 -0500
++++ b/src/core/loader/development_factory.h	2026-10-30 15:22:59.103995254 -0400
+@@ -0,0 +1,31 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++#pragma once
++
++#include <cstddef>
++#include <functional>
++#include <memory>
++#include "common/common_types.h"
++#include "core/file_sys/vfs/vfs_types.h"
++
++namespace Core { class System; }
++
++namespace Loader {
++class AppLoader;
++
++// An explicitly installed development hook. Returning null leaves ordinary
++// loader resolution intact. Callback exceptions propagate to the caller.
++using DevelopmentFactory = std::function<std::unique_ptr<AppLoader>(
++    Core::System&, FileSys::VirtualFile, u64 program_id, std::size_t program_index)>;
++
++// Each install replaces the previous hook and returns a nonzero ownership token.
++// Installing an empty factory clears behavior but still creates a new lease.
++u64 InstallDevelopmentFactory(DevelopmentFactory factory);
++// An old lease cannot remove a factory installed after it.
++bool RemoveDevelopmentFactory(u64 token);
++// Snapshot the callback while locked, then invoke outside the registry mutex.
++// A snapshot may finish after its lease is removed; removal is not cancellation.
++std::unique_ptr<AppLoader> TryDevelopmentFactory(Core::System& system,
++                                                FileSys::VirtualFile file,
++                                                u64 program_id,
++                                                std::size_t program_index);
++} // namespace Loader
+diff --color -ruN a/src/core/loader/loader.cpp b/src/core/loader/loader.cpp
+--- a/src/core/loader/loader.cpp	2026-10-30 15:22:59.097995193 -0400
++++ b/src/core/loader/loader.cpp	2026-10-30 15:22:59.108995306 -0400
+@@ -22,6 +22,7 @@
+ #include "core/file_sys/submission_package.h"
+ #include "core/hle/kernel/k_process.h"
+ #include "core/loader/deconstructed_rom_directory.h"
++#include "core/loader/development_factory.h"
+ #include "core/loader/kip.h"
+ #include "core/loader/nax.h"
+ #include "core/loader/nca.h"
+@@ -385,6 +386,10 @@
+         return nullptr;
+     }
+ 
++    if (auto development = TryDevelopmentFactory(system, file, program_id, program_index)) {
++        return development;
++    }
++
+     if (const auto indexed = ResolveIndexedProgram(system, program_id, program_index)) {
+         return std::make_unique<AppLoader_NCA>(
+             indexed->file, indexed->update_only ? indexed->program_id : 0);
+@@ -392,6 +397,11 @@
+ 
+     FileType type = IdentifyFile(file);
+     const FileType filename_type = GuessFromFilename(file->GetName());
++    // An extracted game's exefs/main is also a valid NSO; prefer the folder (NPDM, RomFS, subsdk).
++    if (type == FileType::NSO && filename_type == FileType::DeconstructedRomDirectory &&
++        AppLoader_DeconstructedRomDirectory::IdentifyType(file) == FileType::DeconstructedRomDirectory) {
++        type = FileType::DeconstructedRomDirectory;
++    }
+ 
+     // A "main" inside an ExeFS directory is also a valid NSO, but loading it alone skips
+     // main.npdm, rtld and the sdk/subsdk modules. Load the whole directory instead.

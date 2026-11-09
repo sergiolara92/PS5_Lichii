@@ -1,0 +1,22 @@
+Switch 2 video: log each movie's decoded format, colour tags and output format once.
+
+diff -ru a/src/video_core/host1x/nx2_video_decoder.cpp b/src/video_core/host1x/nx2_video_decoder.cpp
+--- a/src/video_core/host1x/nx2_video_decoder.cpp	2026-11-04 20:31:45.683580603 -0500
++++ b/src/video_core/host1x/nx2_video_decoder.cpp	2026-11-04 20:31:45.693205740 -0500
+@@ -163,6 +163,16 @@
+     const AVPixelFormat target = format == Nx2PictureFormat::Nv12    ? AV_PIX_FMT_NV12
+                                  : format == Nx2PictureFormat::Rgba8 ? AV_PIX_FMT_RGBA
+                                                                      : AV_PIX_FMT_BGRA;
++    // Once per source/target pair: which conversion a movie takes.
++    static thread_local std::pair<int, int> logged{-1, -1};
++    if (logged != std::pair<int, int>{f->format, target}) {
++        logged = {f->format, target};
++        LOG_INFO(HW_GPU, "nx2 video: {} {}x{} (space {}, range {}, primaries {}, transfer {}) -> {} {}x{} pitch {}",
++                 av_get_pix_fmt_name(static_cast<AVPixelFormat>(f->format)), f->width, f->height,
++                 static_cast<int>(f->colorspace), static_cast<int>(f->color_range),
++                 static_cast<int>(f->color_primaries), static_cast<int>(f->color_trc),
++                 av_get_pix_fmt_name(target), width, height, pitch);
++    }
+     // Frames copied back from a host GPU decoder are already NV12. Copy them as they are:
+     // FFmpeg 6.1's swscale leaves the chroma plane of an NV12 to NV12 copy at zero, which shows
+     // the movies green.

@@ -1,0 +1,17 @@
+--- a/src/core/hle/kernel/k_page_table_base.cpp
++++ b/src/core/hle/kernel/k_page_table_base.cpp
+@@ -251,6 +251,14 @@
+     if (m_address_space_width == 39) {
+         alias_region_size = GetSpaceSize(KAddressSpaceInfo::Type::Alias);
+         heap_region_size = GetSpaceSize(KAddressSpaceInfo::Type::Heap);
++        // Existing research_remote_region_size is nonzero only after the
++        // exact program/application/39-bit/profile gate in KProcess. Reserve
++        // a genuine larger heap VA span before ASLR placement, rather than
++        // lying in GetInfo or changing physical pool/resource accounting.
++        if (research_remote_region_size != 0) {
++            heap_region_size = std::max(heap_region_size, size_t{16} << 30);
++            LOG_INFO(Kernel, "Research heap VA capacity={} policy=hle_heap16gib_not_retail; physical pool and allocation checks unchanged", heap_region_size);
++        }
+         stack_region_size = GetSpaceSize(KAddressSpaceInfo::Type::Stack);
+         kernel_map_region_size = GetSpaceSize(KAddressSpaceInfo::Type::MapSmall);
+         m_code_region_start = m_address_space_start + aslr_space_start +

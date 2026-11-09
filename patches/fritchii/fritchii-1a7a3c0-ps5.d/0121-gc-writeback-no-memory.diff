@@ -1,0 +1,57 @@
+Texture cache: a garbage-collector write-back that finds no memory drops the write-back and
+evicts the image. On the console Ocarina of Time's gameplay needed a 288 MiB scratch buffer to swizzle a
+GPU-modified layer back with 62 MiB left in one piece; std::bad_alloc thrown inside the collector's
+callback ended the app after about two minutes.
+--- a/src/video_core/texture_cache/texture_cache.h
++++ b/src/video_core/texture_cache/texture_cache.h
+@@ -6,6 +6,7 @@
+ 
+ #pragma once
+ 
++#include <new>
+ #include <algorithm>
+ #include <atomic>
+ #include <chrono>
+@@ -180,15 +181,33 @@
+             return false;
+         }
+         if (must_download) {
+-            auto map = runtime.DownloadStagingBuffer(image.unswizzled_size_bytes);
+-            const auto copies = FullDownloadCopies(image.info);
+-            image.DownloadMemory(map, copies);
+-            runtime.Finish();
+-            SwizzleImage(*gpu_memory, image.gpu_addr, image.info, copies, map.mapped_span, swizzle_data_buffer);
+-            ++gc_download_deletes;
+-            // Guest memory holds the GPU's data now (DeleteImage must not mark it stale).
+-            image.flags &= ~ImageFlagBits::GpuModified;
+-            ClearStaleImage(image);
++            // A write-back that finds no memory (the console: a 288 MiB 12288x12288 texture with
++            // 62 MiB left in one piece) is dropped and the image goes anyway, still marked GPU-modified
++            // (DeleteImage then marks its memory stale). Thrown out of the collector's callbacks, the
++            // exception ended the app.
++            try {
++                // The swizzle reads guest memory through GuestMemory::Read, which is noexcept: a
++                // scratch buffer it cannot grow there ends the app. Grow it here, before the
++                // download, where running out of memory only drops the write-back.
++                swizzle_data_buffer.resize_destructive(
++                    image.guest_size_bytes / (std::max)(image.info.resources.layers, 1));
++                auto map = runtime.DownloadStagingBuffer(image.unswizzled_size_bytes);
++                const auto copies = FullDownloadCopies(image.info);
++                image.DownloadMemory(map, copies);
++                runtime.Finish();
++                SwizzleImage(*gpu_memory, image.gpu_addr, image.info, copies, map.mapped_span, swizzle_data_buffer);
++                ++gc_download_deletes;
++                // Guest memory holds the GPU's data now (DeleteImage must not mark it stale).
++                image.flags &= ~ImageFlagBits::GpuModified;
++                ClearStaleImage(image);
++            } catch (const std::bad_alloc&) {
++                swizzle_data_buffer.release();
++                static u32 dropped{};
++                if (dropped++ < 16) {
++                    LOG_WARNING(HW_GPU, "Texture cache: no memory to write back {} MiB at {:#x} before evicting it",
++                                image.unswizzled_size_bytes >> 20, image.gpu_addr);
++                }
++            }
+         } else {
+             MarkStale(image); // before UntrackImage (see MarkStale)
+         }

@@ -1,0 +1,39 @@
+--- a/src/core/hle/kernel/svc/svc_thread.cpp
++++ b/src/core/hle/kernel/svc/svc_thread.cpp
+@@ -16,8 +16,16 @@
+ namespace Kernel::Svc {
+ namespace {
+ 
+-constexpr bool IsValidVirtualCoreId(int32_t core_id) {
+-    return (0 <= core_id && core_id < static_cast<int32_t>(Core::Hardware::NUM_CPU_CORES));
++bool IsValidVirtualCoreId(const KProcess& process, int32_t core_id) {
++    // The kernel already stores virtual affinity and translates virtual IDs via
++    // VirtualToPhysicalCoreMap. The verified research process requests core5.
++    // Expose this existing virtual scheduler model, not extra physical CPUs.
++    // Ordinary applications keep the original four-core validation.
++    const bool research_virtual = process.GetProgramId() == 0x0400c3f00006e000ULL &&
++                                  process.GetPageTable().HasResearchRemoteRegion();
++    const auto count = research_virtual ? Core::Hardware::NumVirtualCores
++                                       : Core::Hardware::NUM_CPU_CORES;
++    return core_id >= 0 && static_cast<size_t>(core_id) < count;
+ }
+ 
+ } // Anonymous namespace
+@@ -38,7 +46,7 @@
+     }
+ 
+     // Validate arguments.
+-    R_UNLESS(IsValidVirtualCoreId(core_id), ResultInvalidCoreId);
++    R_UNLESS(IsValidVirtualCoreId(process, core_id), ResultInvalidCoreId);
+     R_UNLESS(((1ull << core_id) & process.GetCoreMask()) != 0, ResultInvalidCoreId);
+ 
+     R_UNLESS(HighestThreadPriority <= priority && priority <= LowestThreadPriority,
+@@ -262,7 +270,7 @@
+         R_UNLESS(affinity_mask != 0, ResultInvalidCombination);
+ 
+         // Validate the core id.
+-        if (IsValidVirtualCoreId(core_id)) {
++        if (IsValidVirtualCoreId(GetCurrentProcess(system.Kernel()), core_id)) {
+             R_UNLESS(((1ULL << core_id) & affinity_mask) != 0, ResultInvalidCombination);
+         } else {
+             R_UNLESS(core_id == IdealCoreNoUpdate || core_id == IdealCoreDontCare,

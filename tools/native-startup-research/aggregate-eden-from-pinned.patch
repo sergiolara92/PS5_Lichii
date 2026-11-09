@@ -1,0 +1,3990 @@
+--- a/src/common/fs/file.cpp
++++ b/src/common/fs/file.cpp
+@@ -427,6 +427,33 @@
+     return file_size;
+ }
+ 
++size_t IOFile::ReadAt(void* data, size_t length, s64 offset) const {
++    if (!IsOpen()) {
++        return 0;
++    }
++#ifdef _WIN32
++    if (fseeko(file, offset, SEEK_SET) != 0) {
++        return 0;
++    }
++    return std::fread(data, 1, length, file);
++#else
++    const int fd = fileno(file);
++    size_t done = 0;
++    while (done < length) {
++        const auto got = pread(fd, static_cast<u8*>(data) + done, length - done,
++                               static_cast<off_t>(offset + static_cast<s64>(done)));
++        if (got < 0 && errno == EINTR) {
++            continue;
++        }
++        if (got <= 0) {
++            break;
++        }
++        done += static_cast<size_t>(got);
++    }
++    return done;
++#endif
++}
++
+ bool IOFile::Seek(s64 offset, SeekOrigin origin) const {
+     if (!IsOpen()) {
+         return false;
+--- a/src/common/fs/file.h
++++ b/src/common/fs/file.h
+@@ -289,6 +289,14 @@
+     }
+ 
+     /**
++     * Reads length bytes at offset without the stdio buffer (which splits a read into
++     * buffer-sized system calls) and without moving the file pointer.
++     *
++     * @returns Count of bytes successfully read.
++     */
++    [[nodiscard]] size_t ReadAt(void* data, size_t length, s64 offset) const;
++
++    /**
+      * Writes a span of T data to a file sequentially.
+      * This function writes from the current position of the file pointer and
+      * advances it by the (count of T * sizeof(T)) bytes successfully written.
+--- a/src/core/CMakeLists.txt
++++ b/src/core/CMakeLists.txt
+@@ -1133,6 +1133,8 @@
+     launch_timestamp_cache.h
+     loader/deconstructed_rom_directory.cpp
+     loader/deconstructed_rom_directory.h
++    loader/development_factory.cpp
++    loader/development_factory.h
+     loader/kip.cpp
+     loader/kip.h
+     loader/loader.cpp
+--- a/src/core/arm/dynarmic/arm_dynarmic_64.cpp
++++ b/src/core/arm/dynarmic/arm_dynarmic_64.cpp
+@@ -4,6 +4,15 @@
+ // SPDX-FileCopyrightText: Copyright 2018 yuzu Emulator Project
+ // SPDX-License-Identifier: GPL-2.0-or-later
+ 
++#ifdef PROSPERO_CPU_TRACE
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
++extern "C" void prospero_research_svc_trace_dump();
++#endif
++#include <limits>
++#include "common/atomic_ops.h"
++#include "dynarmic/interface/exclusive_monitor.h"
+ #include "common/settings.h"
+ #include "core/arm/dynarmic/arm_dynarmic.h"
+ #include "core/arm/dynarmic/arm_dynarmic_64.h"
+@@ -23,7 +32,9 @@
+ {}
+ 
+ u64 DynarmicCallbacks64::MemoryRead(u64 vaddr, size_t size) {
+-    CheckMemoryAccess(vaddr, size, Kernel::DebugWatchpointType::Read);
++    if (!CheckMemoryAccess(vaddr, size, Kernel::DebugWatchpointType::Read)) {
++        return 0; // Fault placeholder only; strict JIT aborts before register writeback.
++    }
+     switch (size) {
+     case sizeof(u64): return m_memory.Read64(vaddr);
+     case sizeof(u32): return m_memory.Read32(vaddr);
+@@ -33,7 +44,9 @@
+     }
+ }
+ Dynarmic::A64::Vector DynarmicCallbacks64::MemoryRead128(u64 vaddr) {
+-    CheckMemoryAccess(vaddr, 16, Kernel::DebugWatchpointType::Read);
++    if (!CheckMemoryAccess(vaddr, 16, Kernel::DebugWatchpointType::Read)) {
++        return {}; // The DataAbort is consumed before strict JIT writeback.
++    }
+     return {m_memory.Read64(vaddr), m_memory.Read64(vaddr + 8)};
+ }
+ 
+@@ -87,6 +100,150 @@
+             m_memory.WriteExclusive128(vaddr, value, expected);
+ }
+ 
++std::optional<u32> DynarmicCallbacks64::MemoryAtomicCompareExchange32(
++    u64 address, u32 expected, u32 desired, Dynarmic::ExclusiveMonitor* monitor) {
++    auto reject = [&](const char* reason) -> std::optional<u32> {
++        LOG_CRITICAL(Core_ARM, "CASA32 rejected address={:#x}, reason={}", address, reason);
++#ifdef PROSPERO_CPU_TRACE
++        std::fprintf(stderr, "CPU_TRACE casa32_rejected address=%016llx reason=%s action=memory_abort_no_writeback\n",
++                     static_cast<unsigned long long>(address), reason);
++        std::fflush(stderr);
++#endif
++        return std::nullopt;
++    };
++    if ((address & 3) != 0) return reject("alignment");
++    if (address > std::numeric_limits<u64>::max() - sizeof(u32) ||
++        !m_memory.IsValidVirtualAddressRange(address, sizeof(u32))) return reject("span_or_unmapped");
++    if (!monitor) return reject("monitor");
++    if (!CheckMemoryAccess(address, sizeof(u32), Kernel::DebugWatchpointType::Read) ||
++        !CheckMemoryAccess(address, sizeof(u32), Kernel::DebugWatchpointType::Write))
++        return reject("watchpoint_or_memory_access");
++    // GPU/cache preparation may block, so it happens before page/monitor locks.
++    u32* pointer = m_memory.PrepareAtomicPointer32(address);
++    if (!pointer) return reject("coherence_pointer");
++    u32 observed = 0;
++    const char* rejection = "mapping";
++    const bool performed = m_process->GetPageTable().GetBasePageTable().WithAtomicAccess32(
++        address, pointer, rejection, [&]() {
++            monitor->DoAtomicOperation([&]() {
++                // Full host seq_cst barrier is stronger than acquire-only CASA.
++                // Exactly one atomic returns the old value on both match/failure.
++                (void)Common::AtomicCompareAndSwap(pointer, desired, expected, observed);
++            });
++        });
++    // Kernel page lock and monitor are both released before diagnostics.
++    if (!performed) return reject(rejection);
++    return observed;
++}
++
++std::optional<u16> DynarmicCallbacks64::MemoryAtomicCompareExchange16(
++    u64 address, u16 expected, u16 desired, Dynarmic::ExclusiveMonitor* monitor) {
++    auto reject = [&](const char* reason) -> std::optional<u16> {
++        LOG_CRITICAL(Core_ARM, "CAS16 rejected address={:#x}, reason={}", address, reason);
++#ifdef PROSPERO_CPU_TRACE
++        std::fprintf(stderr, "CPU_TRACE cas16_rejected address=%016llx reason=%s action=memory_abort_no_writeback\n",
++                     static_cast<unsigned long long>(address), reason);
++        std::fflush(stderr);
++#endif
++        return std::nullopt;
++    };
++    if ((address & 1) != 0) return reject("alignment");
++    if (address > std::numeric_limits<u64>::max() - sizeof(u16) ||
++        !m_memory.IsValidVirtualAddressRange(address, sizeof(u16))) return reject("span_or_unmapped");
++    if (!monitor) return reject("monitor");
++    if (!CheckMemoryAccess(address, sizeof(u16), Kernel::DebugWatchpointType::Read) ||
++        !CheckMemoryAccess(address, sizeof(u16), Kernel::DebugWatchpointType::Write))
++        return reject("watchpoint_or_memory_access");
++    // GPU/cache preparation may block, so it happens before page/monitor locks.
++    u16* pointer = m_memory.PrepareAtomicPointer16(address);
++    if (!pointer) return reject("coherence_pointer");
++    u16 observed = 0;
++    const char* rejection = "mapping";
++    const bool performed = m_process->GetPageTable().GetBasePageTable().WithAtomicAccess16(
++        address, pointer, rejection, [&]() {
++            monitor->DoAtomicOperation([&]() {
++                // One genuine typed 16-bit host seq_cst CAS; no wider overlapping atomic.
++                // Exactly one atomic returns the old value on both match/failure.
++                (void)Common::AtomicCompareAndSwap(pointer, desired, expected, observed);
++            });
++        });
++    // Kernel page lock and monitor are both released before diagnostics.
++    if (!performed) return reject(rejection);
++    return observed;
++}
++
++std::optional<u8> DynarmicCallbacks64::MemoryAtomicCompareExchange8(
++    u64 address, u8 expected, u8 desired, Dynarmic::ExclusiveMonitor* monitor) {
++    auto reject = [&](const char* reason) -> std::optional<u8> {
++        LOG_CRITICAL(Core_ARM, "CAS8 rejected address={:#x}, reason={}", address, reason);
++#ifdef PROSPERO_CPU_TRACE
++        std::fprintf(stderr, "CPU_TRACE cas8_rejected address=%016llx reason=%s action=memory_abort_no_writeback\n",
++                     static_cast<unsigned long long>(address), reason);
++        std::fflush(stderr);
++#endif
++        return std::nullopt;
++    };
++    if ((address & 0) != 0) return reject("alignment");
++    if (address > std::numeric_limits<u64>::max() - sizeof(u8) ||
++        !m_memory.IsValidVirtualAddressRange(address, sizeof(u8))) return reject("span_or_unmapped");
++    if (!monitor) return reject("monitor");
++    if (!CheckMemoryAccess(address, sizeof(u8), Kernel::DebugWatchpointType::Read) ||
++        !CheckMemoryAccess(address, sizeof(u8), Kernel::DebugWatchpointType::Write))
++        return reject("watchpoint_or_memory_access");
++    // GPU/cache preparation may block, so it happens before page/monitor locks.
++    u8* pointer = m_memory.PrepareAtomicPointer8(address);
++    if (!pointer) return reject("coherence_pointer");
++    u8 observed = 0;
++    const char* rejection = "mapping";
++    const bool performed = m_process->GetPageTable().GetBasePageTable().WithAtomicAccess8(
++        address, pointer, rejection, [&]() {
++            monitor->DoAtomicOperation([&]() {
++                // One genuine typed 8-bit host seq_cst CAS; no wider overlapping atomic.
++                // Exactly one atomic returns the old value on both match/failure.
++                (void)Common::AtomicCompareAndSwap(pointer, desired, expected, observed);
++            });
++        });
++    // Kernel page lock and monitor are both released before diagnostics.
++    if (!performed) return reject(rejection);
++    return observed;
++}
++
++std::optional<u64> DynarmicCallbacks64::MemoryAtomicCompareExchange64(
++    u64 address, u64 expected, u64 desired, Dynarmic::ExclusiveMonitor* monitor) {
++    auto reject = [&](const char* reason) -> std::optional<u64> {
++        LOG_CRITICAL(Core_ARM, "CASA64 rejected address={:#x}, reason={}", address, reason);
++#ifdef PROSPERO_CPU_TRACE
++        std::fprintf(stderr, "CPU_TRACE casa64_rejected address=%016llx reason=%s action=memory_abort_no_writeback\n",
++                     static_cast<unsigned long long>(address), reason);
++        std::fflush(stderr);
++#endif
++        return std::nullopt;
++    };
++    if ((address & 7) != 0) return reject("alignment");
++    if (address > std::numeric_limits<u64>::max() - sizeof(u64) ||
++        !m_memory.IsValidVirtualAddressRange(address, sizeof(u64))) return reject("span_or_unmapped");
++    if (!monitor) return reject("monitor");
++    if (!CheckMemoryAccess(address, sizeof(u64), Kernel::DebugWatchpointType::Read) ||
++        !CheckMemoryAccess(address, sizeof(u64), Kernel::DebugWatchpointType::Write))
++        return reject("watchpoint_or_memory_access");
++    // GPU/cache preparation may block, so it happens before page/monitor locks.
++    u64* pointer = m_memory.PrepareAtomicPointer64(address);
++    if (!pointer) return reject("coherence_pointer");
++    u64 observed = 0;
++    const char* rejection = "mapping";
++    const bool performed = m_process->GetPageTable().GetBasePageTable().WithAtomicAccess64(
++        address, pointer, rejection, [&]() {
++            monitor->DoAtomicOperation([&]() {
++                // One full-width host seq_cst atomic is stronger than all CAS64 ordering forms.
++                // Exactly one atomic returns the old value on both match/failure.
++                (void)Common::AtomicCompareAndSwap(pointer, desired, expected, observed);
++            });
++        });
++    // Kernel page lock and monitor are both released before diagnostics.
++    if (!performed) return reject(rejection);
++    return observed;
++}
++
+ void DynarmicCallbacks64::InstructionCacheOperationRaised(Dynarmic::A64::InstructionCacheOperation op, u64 value) {
+     last_code_addr = u64(-1); //invalidate cached page
+     switch (op) {
+@@ -108,6 +265,16 @@
+ }
+ 
+ void DynarmicCallbacks64::ExceptionRaised(u64 pc, Dynarmic::A64::Exception exception) {
++#ifdef PROSPERO_CPU_TRACE
++    if (exception == Dynarmic::A64::Exception::UnallocatedEncoding) {
++        const auto instruction = MemoryReadCode(pc);
++        std::fprintf(stderr, "CPU_TRACE unallocated_encoding pc=%016llx opcode=%08x code_valid=%u action=abort_no_fallthrough\n",
++                     static_cast<unsigned long long>(pc), instruction.value_or(0), instruction.has_value());
++        prospero_research_svc_trace_dump();
++        std::fflush(stderr);
++        std::abort();
++    }
++#endif
+     switch (exception) {
+     case Dynarmic::A64::Exception::WaitForInterrupt:
+     case Dynarmic::A64::Exception::WaitForEvent:
+@@ -165,7 +332,8 @@
+     if (!m_memory.IsValidVirtualAddressRange(addr, size)) {
+         LOG_CRITICAL(Core_ARM, "Stopping execution due to unmapped memory access at {:#x}",
+                         addr);
+-        m_parent.m_jit->HaltExecution(PrefetchAbort);
++        // This guard is used for data accesses; instruction fetch is separate.
++        m_parent.m_jit->HaltExecution(DataAbort);
+         return false;
+     }
+ 
+@@ -191,11 +359,27 @@
+ 
+ void ArmDynarmic64::MakeJit(Common::PageTable* page_table, std::size_t address_space_bits) {
+     Dynarmic::A64::UserConfig config;
++#ifdef PROSPERO_CPU_TRACE
++    // Immutable JIT profile selection, explicit per-process research opt-in.
++    // No signing/authentication is implemented or asserted by this profile.
++    const char* const profile = std::getenv("PROSPERO_RESEARCH_PAUTH_DISABLED_PROFILE");
++    if (profile && std::strcmp(profile, "0") != 0 && std::strcmp(profile, "1") != 0) {
++        std::fputs("CPU_TRACE invalid_pauth_profile_value action=abort\n", stderr);
++        std::abort();
++    }
++    config.research_pauth_disabled_profile = profile && std::strcmp(profile, "1") == 0;
++    std::fprintf(stderr, "CPU_TRACE jit_profile core=%u pauth_disabled=%u authentication_implemented=0 profile_immutable=1\n",
++                 static_cast<unsigned>(m_core_index), config.research_pauth_disabled_profile);
++    std::fflush(stderr);
++#endif
+ 
+     // Callbacks
+     config.callbacks = std::addressof(*m_cb);
+-
+-    // Memory
++    // Keep real Core validation and the pre-writeback JIT abort contract equal.
++    config.check_halt_on_memory_access = m_cb->m_check_memory_access;
++
++    // Memory: retain the real guest VA width even on callback-only JIT paths.
++    config.page_table_address_space_bits = std::uint32_t(address_space_bits);
+     if (page_table) {
+         // Dynarmic will not write to the page table, const_cast is safe here
+         config.page_table = reinterpret_cast<void**>(
+--- a/src/core/arm/dynarmic/arm_dynarmic_64.h
++++ b/src/core/arm/dynarmic/arm_dynarmic_64.h
+@@ -50,6 +50,14 @@
+     bool MemoryWriteExclusive32(u64 vaddr, std::uint32_t value, std::uint32_t expected) override;
+     bool MemoryWriteExclusive64(u64 vaddr, std::uint64_t value, std::uint64_t expected) override;
+     bool MemoryWriteExclusive128(u64 vaddr, Dynarmic::A64::Vector value, Dynarmic::A64::Vector expected) override;
++    std::optional<u32> MemoryAtomicCompareExchange32(
++        u64 address, u32 expected, u32 desired, Dynarmic::ExclusiveMonitor* monitor) override;
++    std::optional<u16> MemoryAtomicCompareExchange16(
++        u64 address, u16 expected, u16 desired, Dynarmic::ExclusiveMonitor* monitor) override;
++    std::optional<u8> MemoryAtomicCompareExchange8(
++        u64 address, u8 expected, u8 desired, Dynarmic::ExclusiveMonitor* monitor) override;
++    std::optional<u64> MemoryAtomicCompareExchange64(
++        u64 address, u64 expected, u64 desired, Dynarmic::ExclusiveMonitor* monitor) override;
+     void InstructionCacheOperationRaised(Dynarmic::A64::InstructionCacheOperation op, u64 value) override;
+     void ExceptionRaised(u64 pc, Dynarmic::A64::Exception exception) override;
+     void CallSVC(u32 svc) override;
+--- a/src/core/file_sys/fsa/fs_i_file.h
++++ b/src/core/file_sys/fsa/fs_i_file.h
+@@ -6,12 +6,14 @@
+ 
+ #pragma once
+ 
++#include "common/logging.h"
+ #include "common/overflow.h"
+ #include "core/file_sys/errors.h"
+ #include "core/file_sys/fs_file.h"
+ #include "core/file_sys/fs_filesystem.h"
+ #include "core/file_sys/fs_operate_range.h"
+ #include "core/file_sys/vfs/vfs.h"
++#include "core/file_sys/vfs/vfs_read_error.h"
+ #include "core/file_sys/vfs/vfs_types.h"
+ #include "core/hle/result.h"
+ 
+@@ -128,8 +130,15 @@
+ 
+ private:
+     Result DoRead(size_t* out, s64 offset, void* buffer, size_t size, const ReadOption& option) {
+-        const auto read_size = backend->Read(static_cast<u8*>(buffer), size, offset);
+-        *out = read_size;
++        try {
++            const auto read_size = backend->Read(static_cast<u8*>(buffer), size, offset);
++            *out = read_size;
++        } catch (const VfsReadError& error) {
++            *out = 0;
++            LOG_ERROR(Service_FS, "VFS file read failed at offset={:#x}, length={}: {}",
++                      offset, size, error.what());
++            R_RETURN(ResultUnexpectedInCompressedStorageA);
++        }
+ 
+         R_SUCCEED();
+     }
+--- a/src/core/file_sys/program_metadata.cpp
++++ b/src/core/file_sys/program_metadata.cpp
+@@ -20,84 +20,135 @@
+ ProgramMetadata::~ProgramMetadata() = default;
+ 
+ Loader::ResultStatus ProgramMetadata::Load(VirtualFile file) {
+-    const std::size_t total_size = file->GetSize();
+-    if (total_size < sizeof(Header)) {
++    // Parser-only experiment: validate the declared containers and normalize
++    // their common fields. This does not authenticate RSA signatures, and does
++    // not change any caller's existing cryptographic verification policy.
++    const auto contains = [](u64 size, u64 offset, u64 length) {
++        return offset <= size && length <= size - offset;
++    };
++    const auto disjoint = [](u64 first, u64 first_size, u64 second, u64 second_size) {
++        return first + first_size <= second || second + second_size <= first;
++    };
++    const auto sections_valid = [&](u64 size, u64 minimum,
++                                    const std::array<std::pair<u64, u64>, 3>& sections) {
++        for (const auto& [offset, length] : sections) {
++            if (!contains(size, offset, length) || (length && offset < minimum)) return false;
++        }
++        for (size_t i = 0; i < sections.size(); ++i) {
++            for (size_t j = i + 1; j < sections.size(); ++j) {
++                if (sections[i].second && sections[j].second &&
++                    !disjoint(sections[i].first, sections[i].second,
++                              sections[j].first, sections[j].second)) return false;
++            }
++        }
++        return true;
++    };
++
++    Header header{};
++    AcidHeader acid{};
++    AciHeader aci{};
++    FileAccessControl fac{};
++    FileAccessHeader fah{};
++    if (!file || file->GetSize() < sizeof(Header) ||
++        file->ReadObject(&header) != sizeof(Header) ||
++        header.magic != std::array<char, 4>{'M', 'E', 'T', 'A'}) {
+         return Loader::ResultStatus::ErrorBadNPDMHeader;
+     }
+-
+-    if (sizeof(Header) != file->ReadObject(&npdm_header)) {
+-        return Loader::ResultStatus::ErrorBadNPDMHeader;
+-    }
+-
+-    if (sizeof(AcidHeader) != file->ReadObject(&acid_header, npdm_header.acid_offset)) {
++    const u64 file_size = file->GetSize();
++    const u64 acid_start = header.acid_offset;
++    const u64 acid_size = header.acid_size;
++    const u64 aci_start = header.aci_offset;
++    const u64 aci_size = header.aci_size;
++    if (acid_start < sizeof(Header) || !contains(file_size, acid_start, acid_size)) {
+         return Loader::ResultStatus::ErrorBadACIDHeader;
+     }
+-
+-    if (sizeof(AciHeader) != file->ReadObject(&aci_header, npdm_header.aci_offset)) {
++    if (aci_start < sizeof(Header) || aci_size < sizeof(AciHeader) ||
++        !contains(file_size, aci_start, aci_size) ||
++        !disjoint(acid_start, acid_size, aci_start, aci_size)) {
+         return Loader::ResultStatus::ErrorBadACIHeader;
+     }
+ 
+-    // Load acid_file_access per-component instead of the entire struct, since this struct does not
+-    // reflect the layout of the real data.
+-    std::size_t current_offset = acid_header.fac_offset;
+-    if (sizeof(FileAccessControl::version) != file->ReadBytes(&acid_file_access.version,
+-                                                              sizeof(FileAccessControl::version),
+-                                                              current_offset)) {
++    // These are documented wire layouts, not a scan for arbitrary magic bytes.
++    // Reject ambiguous inputs rather than guessing between the two key sizes.
++    u64 rsa_size = 0;
++    for (const u64 candidate_rsa_size : {0x100ULL, 0x180ULL}) {
++        const u64 prefix = candidate_rsa_size * 2;
++        AcidHeader candidate{};
++        if (!contains(acid_size, prefix, sizeof(AcidHeader))) continue;
++        if (file->ReadObject(&candidate, acid_start + prefix) != sizeof(AcidHeader)) {
++            return Loader::ResultStatus::ErrorBadACIDHeader;
++        }
++        if (candidate.magic != std::array<char, 4>{'A', 'C', 'I', 'D'}) continue;
++        if (rsa_size != 0 || candidate.nca_size < candidate_rsa_size + sizeof(AcidHeader) ||
++            !contains(acid_size, candidate_rsa_size, candidate.nca_size)) {
++            return Loader::ResultStatus::ErrorBadACIDHeader;
++        }
++        rsa_size = candidate_rsa_size;
++        acid = candidate;
++    }
++    if (!rsa_size) return Loader::ResultStatus::ErrorBadACIDHeader;
++    const u64 signed_end = rsa_size + static_cast<u64>(acid.nca_size);
++    const u64 common_end = rsa_size * 2 + sizeof(AcidHeader);
++    if (acid.fac_size < 0x2c || !contains(signed_end, acid.fac_offset, acid.fac_size)) {
+         return Loader::ResultStatus::ErrorBadFileAccessControl;
+     }
+-    if (sizeof(FileAccessControl::permissions) !=
+-        file->ReadBytes(&acid_file_access.permissions, sizeof(FileAccessControl::permissions),
+-                        current_offset += sizeof(FileAccessControl::version) + 3)) {
++    if (acid.kac_size % sizeof(u32) != 0 ||
++        !contains(signed_end, acid.kac_offset, acid.kac_size)) {
++        return Loader::ResultStatus::ErrorBadKernelCapabilityDescriptors;
++    }
++    if (!sections_valid(signed_end, common_end, {{{acid.fac_offset, acid.fac_size},
++                                                {acid.sac_offset, acid.sac_size},
++                                                {acid.kac_offset, acid.kac_size}}})) {
++        return Loader::ResultStatus::ErrorBadACIDHeader;
++    }
++    if (file->ReadObject(&aci, aci_start) != sizeof(AciHeader) ||
++        aci.magic != std::array<char, 4>{'A', 'C', 'I', '0'}) {
++        return Loader::ResultStatus::ErrorBadACIHeader;
++    }
++    if (aci.fah_size < 0x1c || !contains(aci_size, aci.fah_offset, aci.fah_size)) {
++        return Loader::ResultStatus::ErrorBadFileAccessHeader;
++    }
++    if (aci.kac_size % sizeof(u32) != 0 || !contains(aci_size, aci.kac_offset, aci.kac_size)) {
++        return Loader::ResultStatus::ErrorBadKernelCapabilityDescriptors;
++    }
++    if (!sections_valid(aci_size, sizeof(AciHeader), {{{aci.fah_offset, aci.fah_size},
++                                                     {aci.sac_offset, aci.sac_size},
++                                                     {aci.kac_offset, aci.kac_size}}})) {
++        return Loader::ResultStatus::ErrorBadACIHeader;
++    }
++
++    // FAC/FAH offsets are relative to their ACID/ACI starts, never the file start.
++    const u64 fac_start = acid_start + static_cast<u64>(acid.fac_offset);
++    const u64 fah_start = aci_start + static_cast<u64>(aci.fah_offset);
++    if (file->ReadBytes(&fac.version, 1, fac_start) != 1 || fac.version == 0 ||
++        file->ReadBytes(&fac.permissions, 8, fac_start + 4) != 8 ||
++        file->ReadBytes(fac.unknown.data(), fac.unknown.size(), fac_start + 12) != fac.unknown.size()) {
+         return Loader::ResultStatus::ErrorBadFileAccessControl;
+     }
+-    if (sizeof(FileAccessControl::unknown) !=
+-        file->ReadBytes(&acid_file_access.unknown, sizeof(FileAccessControl::unknown),
+-                        current_offset + sizeof(FileAccessControl::permissions))) {
+-        return Loader::ResultStatus::ErrorBadFileAccessControl;
+-    }
+-
+-    // Load aci_file_access per-component instead of the entire struct, same as acid_file_access
+-    current_offset = aci_header.fah_offset;
+-    if (sizeof(FileAccessHeader::version) != file->ReadBytes(&aci_file_access.version,
+-                                                             sizeof(FileAccessHeader::version),
+-                                                             current_offset)) {
++    if (file->ReadBytes(&fah.version, 1, fah_start) != 1 || fah.version == 0 ||
++        file->ReadBytes(&fah.permissions, 8, fah_start + 4) != 8 ||
++        file->ReadBytes(&fah.unk_offset, 4, fah_start + 12) != 4 ||
++        file->ReadBytes(&fah.unk_size, 4, fah_start + 16) != 4 ||
++        file->ReadBytes(&fah.unk_offset_2, 4, fah_start + 20) != 4 ||
++        file->ReadBytes(&fah.unk_size_2, 4, fah_start + 24) != 4) {
+         return Loader::ResultStatus::ErrorBadFileAccessHeader;
+     }
+-    if (sizeof(FileAccessHeader::permissions) !=
+-        file->ReadBytes(&aci_file_access.permissions, sizeof(FileAccessHeader::permissions),
+-                        current_offset += sizeof(FileAccessHeader::version) + 3)) {
+-        return Loader::ResultStatus::ErrorBadFileAccessHeader;
+-    }
+-    if (sizeof(FileAccessHeader::unk_offset) !=
+-        file->ReadBytes(&aci_file_access.unk_offset, sizeof(FileAccessHeader::unk_offset),
+-                        current_offset += sizeof(FileAccessHeader::permissions))) {
+-        return Loader::ResultStatus::ErrorBadFileAccessHeader;
+-    }
+-    if (sizeof(FileAccessHeader::unk_size) !=
+-        file->ReadBytes(&aci_file_access.unk_size, sizeof(FileAccessHeader::unk_size),
+-                        current_offset += sizeof(FileAccessHeader::unk_offset))) {
+-        return Loader::ResultStatus::ErrorBadFileAccessHeader;
+-    }
+-    if (sizeof(FileAccessHeader::unk_offset_2) !=
+-        file->ReadBytes(&aci_file_access.unk_offset_2, sizeof(FileAccessHeader::unk_offset_2),
+-                        current_offset += sizeof(FileAccessHeader::unk_size))) {
+-        return Loader::ResultStatus::ErrorBadFileAccessHeader;
+-    }
+-    if (sizeof(FileAccessHeader::unk_size_2) !=
+-        file->ReadBytes(&aci_file_access.unk_size_2, sizeof(FileAccessHeader::unk_size_2),
+-                        current_offset + sizeof(FileAccessHeader::unk_offset_2))) {
+-        return Loader::ResultStatus::ErrorBadFileAccessHeader;
+-    }
+-
+-    aci_kernel_capabilities.resize(aci_header.kac_size / sizeof(u32));
+-    const u64 read_size = aci_header.kac_size;
+-    const u64 read_offset = npdm_header.aci_offset + aci_header.kac_offset;
+-    if (file->ReadBytes(aci_kernel_capabilities.data(), read_size, read_offset) != read_size) {
++    KernelCapabilityDescriptors capabilities(aci.kac_size / sizeof(u32));
++    const u64 capability_start = aci_start + static_cast<u64>(aci.kac_offset);
++    if (file->ReadBytes(capabilities.data(), aci.kac_size, capability_start) != aci.kac_size) {
+         return Loader::ResultStatus::ErrorBadKernelCapabilityDescriptors;
+     }
+ 
++    // Failed loads leave the previous metadata intact.
++    npdm_header = header;
++    acid_header = acid;
++    aci_header = aci;
++    acid_file_access = fac;
++    aci_file_access = fah;
++    aci_kernel_capabilities = std::move(capabilities);
+     return Loader::ResultStatus::Success;
+ }
++
+ 
+ Loader::ResultStatus ProgramMetadata::Reload(VirtualFile file) {
+     const u64 original_program_id = aci_header.title_id;
+--- a/src/core/file_sys/program_metadata.h
++++ b/src/core/file_sys/program_metadata.h
+@@ -116,8 +116,10 @@
+     static_assert(sizeof(Header) == 0x80, "NPDM header structure size is wrong");
+ 
+     struct AcidHeader {
+-        std::array<u8, 0x100> signature;
+-        std::array<u8, 0x100> nca_modulus;
++        // Normalized common fields after the signature and public key. The wire
++        // prefix is 0x200 bytes on NX and 0x300 bytes on Ounce; retain neither
++        // prefix in this parser-only representation. No signature verification
++        // is performed by ProgramMetadata, before or after this experiment.
+         std::array<char, 4> magic;
+         u32_le nca_size;
+         std::array<u8, 0x4> reserved;
+@@ -139,7 +141,7 @@
+         INSERT_PADDING_BYTES(0x8);
+     };
+ 
+-    static_assert(sizeof(AcidHeader) == 0x240, "ACID header structure size is wrong");
++    static_assert(sizeof(AcidHeader) == 0x40, "ACID common header structure size is wrong");
+ 
+     struct AciHeader {
+         std::array<char, 4> magic;
+--- a/src/core/file_sys/savedata_factory.cpp
++++ b/src/core/file_sys/savedata_factory.cpp
+@@ -105,8 +105,11 @@
+                                          SaveDataSpaceId space, SaveDataType type, u64 title_id,
+                                          u128 user_id, u64 save_id) {
+     // According to switchbrew, if a save is of type SaveData and the title id field is 0, it should
+-    // be interpreted as the title id of the current process.
+-    if (type == SaveDataType::Account || type == SaveDataType::Device) {
++    // be interpreted as the title id of the current process. The same holds for cache storage:
++    // otherwise every game's cache storage is one shared folder (save/cache/0000000000000000), and
++    // two games writing the same file names there (two games of one series sharing a folder name) read
++    // each other's GPU shader caches.
++    if (type == SaveDataType::Account || type == SaveDataType::Device || type == SaveDataType::Cache) {
+         if (title_id == 0) {
+             title_id = program_id;
+         }
+--- /dev/null
++++ b/src/core/file_sys/vfs/vfs_read_error.h
+@@ -0,0 +1,14 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++#pragma once
++
++#include <stdexcept>
++
++namespace FileSys {
++// A VFS backend could not produce valid requested bytes. This is distinct from
++// an ordinary short read/EOF. IPC read boundaries translate only this category
++// into an FS error; unrelated host exceptions retain their original behavior.
++class VfsReadError : public std::runtime_error {
++public:
++    using std::runtime_error::runtime_error;
++};
++} // namespace FileSys
+--- a/src/core/file_sys/vfs/vfs_real.cpp
++++ b/src/core/file_sys/vfs/vfs_real.cpp
+@@ -6,9 +6,11 @@
+ 
+ #include <algorithm>
+ #include <cstddef>
++#include <cstring>
+ #include <iterator>
+ #include <utility>
+ #include "common/assert.h"
++#include "common/literals.h"
+ #include "common/fs/file.h"
+ #include "common/fs/fs.h"
+ #include "common/fs/path_util.h"
+@@ -331,12 +333,60 @@
+     return True(perms & OpenMode::Read);
+ }
+ 
++using namespace Common::Literals;
++
++namespace {
++constexpr std::size_t ReadBlockSize = 1_MiB;
++constexpr std::size_t ReadBlocksPerFile = 8;
++} // namespace
++
+ std::size_t RealVfsFile::Read(u8* data, std::size_t length, std::size_t offset) const {
+     auto lk = base.RefreshReference(path, perms, *reference);
+-    if (!reference->file || !reference->file->Seek(static_cast<s64>(offset))) {
++    if (!reference->file) {
+         return 0;
+     }
+-    return reference->file->ReadSpan(std::span{data, length});
++    if (True(perms & OpenMode::Write)) {
++        // Writable files keep stdio's buffered view, which has their unflushed writes.
++        if (!reference->file->Seek(static_cast<s64>(offset))) {
++            return 0;
++        }
++        return reference->file->ReadSpan(std::span{data, length});
++    }
++    if (length >= ReadBlockSize) {
++        return reference->file->ReadAt(data, length, static_cast<s64>(offset));
++    }
++    std::size_t done = 0;
++    while (done < length) {
++        const u64 position = offset + done;
++        const u64 index = position / ReadBlockSize;
++        auto& blocks = reference->blocks;
++        auto block = std::find_if(blocks.begin(), blocks.end(),
++                                  [index](const auto& entry) { return entry.index == index; });
++        if (block == blocks.end()) {
++            if (blocks.size() < ReadBlocksPerFile) {
++                block = blocks.emplace(blocks.end());
++            } else {
++                block = std::min_element(blocks.begin(), blocks.end(),
++                                         [](const auto& a, const auto& b) { return a.used < b.used; });
++            }
++            block->index = index;
++            block->data.resize(ReadBlockSize);
++            block->data.resize(reference->file->ReadAt(block->data.data(), ReadBlockSize,
++                                                       static_cast<s64>(index * ReadBlockSize)));
++        }
++        block->used = ++reference->block_clock;
++        const u64 start = position - index * ReadBlockSize;
++        if (start >= block->data.size()) {
++            break;
++        }
++        const std::size_t count = std::min<std::size_t>(length - done, block->data.size() - start);
++        std::memcpy(data + done, block->data.data() + start, count);
++        done += count;
++        if (block->data.size() < ReadBlockSize) {
++            break;
++        }
++    }
++    return done;
+ }
+ 
+ std::size_t RealVfsFile::Write(const u8* data, std::size_t length, std::size_t offset) {
+--- a/src/core/file_sys/vfs/vfs_real.h
++++ b/src/core/file_sys/vfs/vfs_real.h
+@@ -10,6 +10,7 @@
+ #include <mutex>
+ #include <optional>
+ #include <string_view>
++#include <vector>
+ #include "common/intrusive_list.h"
+ #include "core/file_sys/fs_filesystem.h"
+ #include "core/file_sys/vfs/vfs.h"
+@@ -22,6 +23,15 @@
+ 
+ struct FileReference : public Common::IntrusiveListBaseNode<FileReference> {
+     std::shared_ptr<Common::FS::IOFile> file{};
++    // Read-only files: recently read 1 MiB blocks. Each system call on the console's storage
++    // costs about the same whatever its size, so a game's small reads are served from whole blocks.
++    struct Block {
++        u64 index;
++        u64 used;
++        std::vector<u8> data;
++    };
++    std::vector<Block> blocks{};
++    u64 block_clock{};
+ };
+ 
+ class RealVfsFile;
+--- a/src/core/hle/kernel/k_memory_block.h
++++ b/src/core/hle/kernel/k_memory_block.h
+@@ -55,6 +55,10 @@
+ 
+     Free = static_cast<u32>(Svc::MemoryState::Free),
+ 
++    // Explicit HLE research reservation. Visible QueryMemory state remains Free;
++    // no physical backing or remote mapping implementation is implied.
++    ResearchRemoteReserved = static_cast<u32>(Svc::MemoryState::Free) | (1u << 28),
++
+     IoMemory = static_cast<u32>(Svc::MemoryState::Io) | FlagMapped | FlagCanDeviceMap |
+                FlagCanAlignedDeviceMap,
+     IoRegister =
+@@ -145,6 +149,13 @@
+ static_assert(static_cast<u32>(KMemoryState::Coverage) == 0x00002016);
+ static_assert(static_cast<u32>(KMemoryState::Insecure) == 0x055C3817);
+ 
++static_assert((static_cast<u32>(KMemoryState::ResearchRemoteReserved) & 0xFFu) ==
++              static_cast<u32>(Svc::MemoryState::Free));
++static_assert((static_cast<u32>(KMemoryState::ResearchRemoteReserved) &
++               static_cast<u32>(KMemoryState::FlagMapped | KMemoryState::FlagReferenceCounted |
++                               KMemoryState::FlagCanReprotect | KMemoryState::FlagCanUseIpc |
++                               KMemoryState::FlagLinearMapped)) == 0);
++
+ enum class KMemoryPermission : u8 {
+     None = 0,
+     All = static_cast<u8>(~None),
+--- a/src/core/hle/kernel/k_page_table_base.cpp
++++ b/src/core/hle/kernel/k_page_table_base.cpp
+@@ -9,6 +9,7 @@
+ #include "core/core.h"
+ #include "core/hle/kernel/k_address_space_info.h"
+ #include "core/hle/kernel/k_page_table_base.h"
++#include "core/hle/kernel/research_remote_region_layout.h"
+ #include "core/hle/kernel/k_scoped_resource_reservation.h"
+ #include "core/hle/kernel/k_system_resource.h"
+ 
+@@ -157,6 +158,8 @@
+     m_enable_aslr = true;
+     m_enable_device_address_space_merge = false;
+ 
++    m_research_remote_region_start = 0;
++    m_research_remote_region_end = 0;
+     m_heap_region_start = 0;
+     m_heap_region_end = 0;
+     m_current_heap_end = 0;
+@@ -201,11 +204,19 @@
+                                                m_memory_block_slab_manager));
+ }
+ 
+-Result KPageTableBase::InitializeForProcess(Svc::CreateProcessFlag as_type, bool enable_aslr, bool enable_das_merge, bool from_back, KMemoryManager::Pool pool, KProcessAddress code_address, size_t code_size, KSystemResource* system_resource, KResourceLimit* resource_limit, Core::Memory::Memory& memory, KProcessAddress aslr_space_start) {
++Result KPageTableBase::InitializeForProcess(Svc::CreateProcessFlag as_type, bool enable_aslr, bool enable_das_merge, bool from_back, KMemoryManager::Pool pool, KProcessAddress code_address, size_t code_size, KSystemResource* system_resource, KResourceLimit* resource_limit, Core::Memory::Memory& memory, KProcessAddress aslr_space_start, size_t research_remote_region_size) {
+     // Calculate region extents.
+     const size_t as_width = GetAddressSpaceWidth(as_type);
+     const KProcessAddress start = 0;
+     const KProcessAddress end = (1ULL << as_width);
++
++    // Explicit caller-selected HLE policy only. Default zero preserves ordinary
++    // region placement, random draw count, memory state, and unsupported queries.
++    m_research_remote_region_start = 0;
++    m_research_remote_region_end = 0;
++    R_UNLESS(research_remote_region_size == 0 ||
++                 (as_width == 39 && Common::IsAligned(research_remote_region_size, RegionAlignment)),
++             ResultInvalidSize);
+ 
+     // Validate the region.
+     ASSERT(start <= code_address);
+@@ -240,6 +251,14 @@
+     if (m_address_space_width == 39) {
+         alias_region_size = GetSpaceSize(KAddressSpaceInfo::Type::Alias);
+         heap_region_size = GetSpaceSize(KAddressSpaceInfo::Type::Heap);
++        // Existing research_remote_region_size is nonzero only after the
++        // exact program/application/39-bit/profile gate in KProcess. Reserve
++        // a genuine larger heap VA span before ASLR placement, rather than
++        // lying in GetInfo or changing physical pool/resource accounting.
++        if (research_remote_region_size != 0) {
++            heap_region_size = std::max(heap_region_size, size_t{16} << 30);
++            LOG_INFO(Kernel, "Research heap VA capacity={} policy=hle_heap16gib_not_retail; physical pool and allocation checks unchanged", heap_region_size);
++        }
+         stack_region_size = GetSpaceSize(KAddressSpaceInfo::Type::Stack);
+         kernel_map_region_size = GetSpaceSize(KAddressSpaceInfo::Type::MapSmall);
+         m_code_region_start = m_address_space_start + aslr_space_start +
+@@ -307,8 +326,9 @@
+     const size_t needed_size =
+         (alias_region_size + heap_region_size + stack_region_size + kernel_map_region_size);
+     R_UNLESS(alloc_size >= needed_size, ResultOutOfMemory);
+-
+-    const size_t remaining_size = alloc_size - needed_size;
++    R_UNLESS(research_remote_region_size <= alloc_size - needed_size, ResultOutOfMemory);
++
++    const size_t remaining_size = alloc_size - needed_size - research_remote_region_size;
+ 
+     // Determine random placements for each region.
+     size_t alias_rnd = 0, heap_rnd = 0, stack_rnd = 0, kmap_rnd = 0;
+@@ -385,6 +405,32 @@
+                 m_stack_region_end += kernel_map_region_size;
+             }
+         }
++    }
++
++    if (research_remote_region_size != 0) {
++        const size_t remote_rnd = enable_aslr
++            ? KSystemControl::GenerateRandomRange(0, remaining_size / RegionAlignment) * RegionAlignment
++            : 0;
++        std::array<ResearchRemoteLayout::Region, 4> legacy{{
++            {GetInteger(m_alias_region_start), alias_region_size, alias_rnd},
++            {GetInteger(m_heap_region_start), heap_region_size, heap_rnd},
++            {GetInteger(m_stack_region_start), stack_region_size, stack_rnd},
++            {GetInteger(m_kernel_map_region_start), kernel_map_region_size, kmap_rnd},
++        }};
++        u64 remote_start = 0;
++        R_UNLESS(ResearchRemoteLayout::Insert(legacy, GetInteger(alloc_start), alloc_size,
++                                            research_remote_region_size, remote_rnd, remote_start),
++                 ResultOutOfMemory);
++        m_alias_region_start = legacy[0].start;
++        m_alias_region_end = legacy[0].start + legacy[0].size;
++        m_heap_region_start = legacy[1].start;
++        m_heap_region_end = legacy[1].start + legacy[1].size;
++        m_stack_region_start = legacy[2].start;
++        m_stack_region_end = legacy[2].start + legacy[2].size;
++        m_kernel_map_region_start = legacy[3].start;
++        m_kernel_map_region_end = legacy[3].start + legacy[3].size;
++        m_research_remote_region_start = remote_start;
++        m_research_remote_region_end = remote_start + research_remote_region_size;
+     }
+ 
+     // Set heap and fill members.
+@@ -441,7 +487,25 @@
+     m_memory = std::addressof(memory);
+ 
+     // Initialize our memory block manager.
+-    R_RETURN(m_memory_block_manager.Initialize(m_address_space_start, m_address_space_end, m_memory_block_slab_manager));
++    if (!this->HasResearchRemoteRegion()) {
++        R_RETURN(m_memory_block_manager.Initialize(m_address_space_start, m_address_space_end,
++                                                   m_memory_block_slab_manager));
++    }
++
++    // Preallocate both split nodes before initializing the block tree, so a
++    // resource failure leaves no initialized tree requiring caller rollback.
++    Result allocator_result;
++    KMemoryBlockManagerUpdateAllocator allocator(std::addressof(allocator_result),
++                                                  m_memory_block_slab_manager);
++    R_TRY(allocator_result);
++    R_TRY(m_memory_block_manager.Initialize(m_address_space_start, m_address_space_end,
++                                            m_memory_block_slab_manager));
++    m_memory_block_manager.Update(
++        std::addressof(allocator), m_research_remote_region_start,
++        research_remote_region_size / PageSize, KMemoryState::ResearchRemoteReserved,
++        KMemoryPermission::None, KMemoryAttribute::None,
++        KMemoryBlockDisableMergeAttribute::Normal, KMemoryBlockDisableMergeAttribute::None);
++    R_SUCCEED();
+ }
+ 
+ Result KPageTableBase::FinalizeProcess() {
+@@ -5144,6 +5208,9 @@
+ }
+ 
+ Result KPageTableBase::MapPhysicalMemory(KProcessAddress address, size_t size) {
++    // The old implementation treats any non-Free block as already mapped.
++    // Remote reservation is deliberately unmapped and must never hit that path.
++    R_UNLESS(!this->OverlapsResearchRemoteRegion(address, size), ResultInvalidMemoryRegion);
+     // Lock the physical memory lock.
+     KScopedLightLock phys_lk(m_map_physical_memory_lock);
+ 
+--- a/src/core/hle/kernel/k_page_table_base.h
++++ b/src/core/hle/kernel/k_page_table_base.h
+@@ -191,6 +191,9 @@
+     Core::System& m_system;
+     KProcessAddress m_address_space_start{};
+     KProcessAddress m_address_space_end{};
++    // Unconditional members: never vary class ABI by diagnostic TU macros.
++    KProcessAddress m_research_remote_region_start{};
++    KProcessAddress m_research_remote_region_end{};
+     KProcessAddress m_heap_region_start{};
+     KProcessAddress m_heap_region_end{};
+     KProcessAddress m_current_heap_end{};
+@@ -242,7 +245,8 @@
+                                 KMemoryManager::Pool pool, KProcessAddress code_address,
+                                 size_t code_size, KSystemResource* system_resource,
+                                 KResourceLimit* resource_limit, Core::Memory::Memory& memory,
+-                                KProcessAddress aslr_space_start);
++                                KProcessAddress aslr_space_start,
++                                size_t research_remote_region_size = 0);
+ 
+     Result FinalizeProcess();
+     void Finalize();
+@@ -281,6 +285,97 @@
+         // Even though Unsafe physical memory is KMemoryState_Normal, it must be mapped inside the
+         // alias code region.
+         return this->CanContain(addr, size, Svc::MemoryState::AliasCode);
++    }
++
++    // Keep mapping/permission/backing lifetime stable until the short atomic
++    // operation completes. Preparation must already be done outside this lock;
++    // operation may only acquire the monitor and execute the host atomic.
++    template<typename Function>
++    bool WithAtomicAccess32(KProcessAddress address, u32* prepared_pointer,
++                            const char*& rejection, Function operation) {
++        if ((GetInteger(address) & 3) != 0) { rejection = "alignment"; return false; }
++        if (!this->Contains(address, sizeof(u32))) { rejection = "span"; return false; }
++        KScopedLightLock lock(m_general_lock);
++        const auto* block = m_memory_block_manager.FindBlock(address);
++        if (!block) { rejection = "mapping"; return false; }
++        const auto info = block->GetMemoryInfo();
++        if (GetInteger(address) + sizeof(u32) > info.GetEndAddress() ||
++            (info.GetPermission() & KMemoryPermission::UserReadWrite) != KMemoryPermission::UserReadWrite ||
++            !True(info.GetState() & KMemoryState::FlagLinearMapped)) {
++            rejection = "permission"; return false;
++        }
++        if (!prepared_pointer ||
++            m_memory->GetPointerSilent(address) != reinterpret_cast<u8*>(prepared_pointer)) {
++            rejection = "mapping_changed"; return false;
++        }
++        operation();
++        return true;
++    }
++
++    template<typename Function>
++    bool WithAtomicAccess16(KProcessAddress address, u16* prepared_pointer,
++                            const char*& rejection, Function operation) {
++        if ((GetInteger(address) & 1) != 0) { rejection = "alignment"; return false; }
++        if (!this->Contains(address, sizeof(u16))) { rejection = "span"; return false; }
++        KScopedLightLock lock(m_general_lock);
++        const auto* block = m_memory_block_manager.FindBlock(address);
++        if (!block) { rejection = "mapping"; return false; }
++        const auto info = block->GetMemoryInfo();
++        if (GetInteger(address) + sizeof(u16) > info.GetEndAddress() ||
++            (info.GetPermission() & KMemoryPermission::UserReadWrite) != KMemoryPermission::UserReadWrite ||
++            !True(info.GetState() & KMemoryState::FlagLinearMapped)) {
++            rejection = "permission"; return false;
++        }
++        if (!prepared_pointer ||
++            m_memory->GetPointerSilent(address) != reinterpret_cast<u8*>(prepared_pointer)) {
++            rejection = "mapping_changed"; return false;
++        }
++        operation();
++        return true;
++    }
++
++    template<typename Function>
++    bool WithAtomicAccess8(KProcessAddress address, u8* prepared_pointer,
++                            const char*& rejection, Function operation) {
++        if ((GetInteger(address) & 0) != 0) { rejection = "alignment"; return false; }
++        if (!this->Contains(address, sizeof(u8))) { rejection = "span"; return false; }
++        KScopedLightLock lock(m_general_lock);
++        const auto* block = m_memory_block_manager.FindBlock(address);
++        if (!block) { rejection = "mapping"; return false; }
++        const auto info = block->GetMemoryInfo();
++        if (GetInteger(address) + sizeof(u8) > info.GetEndAddress() ||
++            (info.GetPermission() & KMemoryPermission::UserReadWrite) != KMemoryPermission::UserReadWrite ||
++            !True(info.GetState() & KMemoryState::FlagLinearMapped)) {
++            rejection = "permission"; return false;
++        }
++        if (!prepared_pointer ||
++            m_memory->GetPointerSilent(address) != reinterpret_cast<u8*>(prepared_pointer)) {
++            rejection = "mapping_changed"; return false;
++        }
++        operation();
++        return true;
++    }
++
++    template<typename Function>
++    bool WithAtomicAccess64(KProcessAddress address, u64* prepared_pointer,
++                            const char*& rejection, Function operation) {
++        if ((GetInteger(address) & 7) != 0) { rejection = "alignment"; return false; }
++        if (!this->Contains(address, sizeof(u64))) { rejection = "span"; return false; }
++        KScopedLightLock lock(m_general_lock);
++        const auto* block = m_memory_block_manager.FindBlock(address);
++        if (!block) { rejection = "mapping"; return false; }
++        const auto info = block->GetMemoryInfo();
++        if (GetInteger(address) + sizeof(u64) > info.GetEndAddress() ||
++            (info.GetPermission() & KMemoryPermission::UserReadWrite) != KMemoryPermission::UserReadWrite ||
++            !True(info.GetState() & KMemoryState::FlagLinearMapped)) {
++            rejection = "permission"; return false;
++        }
++        if (!prepared_pointer ||
++            m_memory->GetPointerSilent(address) != reinterpret_cast<u8*>(prepared_pointer)) {
++            rejection = "mapping_changed"; return false;
++        }
++        operation();
++        return true;
+     }
+ 
+     KScopedLightLock AcquireDeviceMapLock() {
+@@ -657,6 +752,23 @@
+     KProcessAddress GetAddressSpaceStart() const {
+         return m_address_space_start;
+     }
++    bool HasResearchRemoteRegion() const {
++        return m_research_remote_region_start < m_research_remote_region_end;
++    }
++    KProcessAddress GetResearchRemoteRegionStart() const {
++        return m_research_remote_region_start;
++    }
++    size_t GetResearchRemoteRegionSize() const {
++        return m_research_remote_region_end - m_research_remote_region_start;
++    }
++    bool OverlapsResearchRemoteRegion(KProcessAddress address, size_t size) const {
++        if (!this->HasResearchRemoteRegion() || size == 0) return false;
++        // Subtraction form avoids trusting overflowing address+size inputs.
++        if (address >= m_research_remote_region_end) return false;
++        return address >= m_research_remote_region_start ||
++               size > static_cast<size_t>(m_research_remote_region_start - address);
++    }
++
+     KProcessAddress GetHeapRegionStart() const {
+         return m_heap_region_start;
+     }
+--- a/src/core/hle/kernel/k_process.cpp
++++ b/src/core/hle/kernel/k_process.cpp
+@@ -5,6 +5,12 @@
+ // SPDX-License-Identifier: GPL-2.0-or-later
+ 
+ #include <random>
++#ifdef PROSPERO_NATIVE_STARTUP_RESEARCH
++#include <cstdio>
++#include <cstdlib>
++#include "core/hle/kernel/research_remote_region_policy.h"
++#include "core/research/native_startup_profile.h"
++#endif
+ #include "common/scope_exit.h"
+ #include "common/settings.h"
+ #include "core/arm/dynarmic/arm_dynarmic.h"
+@@ -417,9 +423,35 @@
+         const bool enable_aslr = True(params.flags & Svc::CreateProcessFlag::EnableAslr);
+         const bool enable_das_merge =
+             False(params.flags & Svc::CreateProcessFlag::DisableDeviceAddressSpaceMerge);
++        size_t research_remote_size = 0;
++#ifdef PROSPERO_NATIVE_STARTUP_RESEARCH
++        const auto native_profiles = Core::NativeStartupResearch::ReadSelection();
++        R_UNLESS(native_profiles.valid, ResultInvalidState);
++        const char* remote_setting = native_profiles.active && native_profiles.remote ? "1" : "0";
++        const auto remote_selection = ResearchRemotePolicy::Select(
++            remote_setting ? std::string_view(remote_setting) : std::string_view{},
++            params.program_id, True(params.flags & Svc::CreateProcessFlag::IsApplication),
++            as_type == Svc::CreateProcessFlag::AddressSpace64Bit);
++        R_UNLESS(remote_selection != ResearchRemotePolicy::Selection::InvalidSetting,
++                 ResultInvalidState);
++        R_UNLESS(remote_selection != ResearchRemotePolicy::Selection::UnsupportedTargetShape,
++                 ResultInvalidState);
++        if (remote_selection == ResearchRemotePolicy::Selection::Enabled) {
++            research_remote_size = ResearchRemotePolicy::ReservedBytes;
++        }
++#endif
+         R_TRY(m_page_table.Initialize(as_type, enable_aslr, enable_das_merge, !enable_aslr, pool,
+                                       params.code_address, code_size, m_system_resource, res_limit,
+-                                      m_memory, aslr_space_start));
++                                      m_memory, aslr_space_start, research_remote_size));
++#ifdef PROSPERO_NATIVE_STARTUP_RESEARCH
++        if (m_page_table.HasResearchRemoteRegion()) {
++            std::fprintf(stderr, "NATIVE_RESEARCH remote_region_reserved program_id=%016llx address=%016llx size=%016llx policy=hle_64gib_not_retail physical_backing=0\n",
++                         static_cast<unsigned long long>(params.program_id),
++                         static_cast<unsigned long long>(GetInteger(m_page_table.GetResearchRemoteRegionStart())),
++                         static_cast<unsigned long long>(m_page_table.GetResearchRemoteRegionSize()));
++            std::fflush(stderr);
++        }
++#endif
+     }
+     ON_RESULT_FAILURE_2 {
+         m_page_table.Finalize();
+--- a/src/core/hle/kernel/k_process_page_table.h
++++ b/src/core/hle/kernel/k_process_page_table.h
+@@ -23,10 +23,12 @@
+                       bool from_back, KMemoryManager::Pool pool, KProcessAddress code_address,
+                       size_t code_size, KSystemResource* system_resource,
+                       KResourceLimit* resource_limit, Core::Memory::Memory& memory,
+-                      KProcessAddress aslr_space_start) {
++                      KProcessAddress aslr_space_start,
++                      size_t research_remote_region_size = 0) {
+         R_RETURN(m_page_table.InitializeForProcess(
+             as_type, enable_aslr, enable_das_merge, from_back, pool, code_address, code_size,
+-            system_resource, resource_limit, memory, aslr_space_start));
++            system_resource, resource_limit, memory, aslr_space_start,
++            research_remote_region_size));
+     }
+ 
+     void Finalize() {
+@@ -378,6 +380,16 @@
+     KProcessAddress GetAddressSpaceStart() const {
+         return m_page_table.GetAddressSpaceStart();
+     }
++    bool HasResearchRemoteRegion() const {
++        return m_page_table.HasResearchRemoteRegion();
++    }
++    KProcessAddress GetResearchRemoteRegionStart() const {
++        return m_page_table.GetResearchRemoteRegionStart();
++    }
++    size_t GetResearchRemoteRegionSize() const {
++        return m_page_table.GetResearchRemoteRegionSize();
++    }
++
+     KProcessAddress GetHeapRegionStart() const {
+         return m_page_table.GetHeapRegionStart();
+     }
+--- /dev/null
++++ b/src/core/hle/kernel/research_remote_region_layout.h
+@@ -0,0 +1,64 @@
++// Experimental HLE virtual-region placement policy, not a retail layout claim.
++// This standalone helper allocates no physical memory and is OFF unless called.
++#pragma once
++#include <array>
++#include <cstdint>
++#include <limits>
++
++namespace Kernel::ResearchRemoteLayout {
++constexpr std::uint64_t Alignment = 2ULL * 1024 * 1024;
++struct Region {
++    std::uint64_t start;
++    std::uint64_t size;
++    std::uint64_t random_offset;
++};
++
++// Legacy regions must already be packed by the unchanged four-region algorithm,
++// using remaining = alloc_size - legacy_sizes - remote_size. Equal offsets put
++// the remote region after all legacy regions, preserving their existing ties.
++inline bool Insert(std::array<Region, 4>& legacy, std::uint64_t alloc_start,
++                   std::uint64_t alloc_size, std::uint64_t remote_size,
++                   std::uint64_t remote_offset, std::uint64_t& remote_start) {
++    if (!remote_size || remote_size % Alignment || alloc_start % Alignment ||
++        remote_offset % Alignment || alloc_start > std::numeric_limits<std::uint64_t>::max() - alloc_size)
++        return false;
++    const auto alloc_end = alloc_start + alloc_size;
++    std::uint64_t needed = remote_size;
++    for (const auto& region : legacy) {
++        if (region.size % Alignment || region.start % Alignment || region.random_offset % Alignment ||
++            region.size > alloc_size || needed > alloc_size - region.size)
++            return false;
++        needed += region.size;
++    }
++    if (needed > alloc_size || remote_offset > alloc_size - needed)
++        return false;
++    auto candidate = legacy; // Invalid inputs never mutate callers' tracked ranges.
++    std::uint64_t result = alloc_start + remote_offset;
++    for (auto& region : candidate) {
++        if (region.random_offset > alloc_size - needed || region.start < alloc_start ||
++            region.start > alloc_end || region.size > alloc_end - region.start)
++            return false;
++        if (region.random_offset <= remote_offset) {
++            if (result > alloc_end - region.size) return false;
++            result += region.size;
++        } else {
++            if (region.start > alloc_end - remote_size) return false;
++            region.start += remote_size;
++        }
++    }
++    if (result > alloc_end || remote_size > alloc_end - result) return false;
++    auto overlaps = [](std::uint64_t a, std::uint64_t as, std::uint64_t b, std::uint64_t bs) {
++        return as && bs && a < b + bs && b < a + as;
++    };
++    for (std::size_t i = 0; i < candidate.size(); ++i) {
++        const auto& a = candidate[i];
++        if (a.start > alloc_end || a.size > alloc_end - a.start ||
++            overlaps(a.start, a.size, result, remote_size)) return false;
++        for (std::size_t j = i + 1; j < candidate.size(); ++j)
++            if (overlaps(a.start, a.size, candidate[j].start, candidate[j].size)) return false;
++    }
++    legacy = candidate;
++    remote_start = result;
++    return true;
++}
++} // namespace Kernel::ResearchRemoteLayout
+--- /dev/null
++++ b/src/core/hle/kernel/research_remote_region_policy.h
+@@ -0,0 +1,19 @@
++// OFF-by-default, exact-input-selected diagnostic HLE policy.
++// This is not a statement of retail Switch2 remote-memory capacity or layout.
++#pragma once
++#include <cstdint>
++#include <string_view>
++
++namespace Kernel::ResearchRemotePolicy {
++constexpr std::uint64_t ProgramId = 0x0400c3f00006e000ULL; // Verified input main.npdm ACI0.
++constexpr std::uint64_t ReservedBytes = 64ULL * 1024 * 1024 * 1024;
++enum class Selection { Off, OtherApplication, Enabled, InvalidSetting, UnsupportedTargetShape };
++constexpr Selection Select(std::string_view setting, std::uint64_t program_id,
++                           bool is_application, bool is_39_bit) {
++    if (setting.empty() || setting == "0") return Selection::Off;
++    if (setting != "1") return Selection::InvalidSetting;
++    if (program_id != ProgramId) return Selection::OtherApplication;
++    if (!is_application || !is_39_bit) return Selection::UnsupportedTargetShape;
++    return Selection::Enabled;
++}
++} // namespace Kernel::ResearchRemotePolicy
+--- a/src/core/hle/kernel/svc/svc_info.cpp
++++ b/src/core/hle/kernel/svc/svc_info.cpp
+@@ -9,6 +9,7 @@
+ #include "core/hle/kernel/k_memory_manager.h"
+ #include "core/hle/kernel/k_process.h"
+ #include "core/hle/kernel/k_resource_limit.h"
++#include "core/hle/kernel/memory_types.h"
+ #include "core/hle/kernel/svc.h"
+ #include "core/hle/kernel/svc_results.h"
+ #include "core/hle/kernel/svc_version.h"
+@@ -20,6 +21,33 @@
+     LOG_TRACE(Kernel_SVC, "called info_id={:#x}, info_sub_id={:#x}, handle={:#08x}", info_id_type, info_sub_id, handle);
+     u32 info_id = u32(info_id_type);
+     switch (info_id_type) {
++    case InfoType::RemoteRegionAddress:
++    case InfoType::RemoteRegionSize:
++    case static_cast<InfoType>(33): { // Research-only AllocateAlignment / ProcessPageSize.
++        // Default-OFF: preserve the old unsupported-ID result before validating
++        // arguments, including when an old guest supplies an invalid handle.
++        R_UNLESS(GetCurrentProcess(system.Kernel()).GetPageTable().HasResearchRemoteRegion(),
++                 ResultInvalidEnumValue);
++        R_UNLESS(info_sub_id == 0, ResultInvalidEnumValue);
++        const auto& handles = GetCurrentProcess(system.Kernel()).GetHandleTable();
++        KScopedAutoObject process = handles.GetObject<KProcess>(system.Kernel(), handle);
++        R_UNLESS(process.IsNotNull(), ResultInvalidHandle);
++        const auto& table = process->GetPageTable();
++        R_UNLESS(table.HasResearchRemoteRegion(), ResultInvalidEnumValue);
++        if (info_id_type == static_cast<InfoType>(33)) {
++            // Report the actual HLE allocation granule used by this Core.
++            // This is not a claim about the retail Switch 2 page size, and
++            // does not enable remote mappings or remote memory accounting.
++            *result = Kernel::PageSize;
++        } else {
++            // Return tracked, actually reserved virtual extents of the queried
++            // process. No remote-map support is implied by these queries.
++            *result = info_id_type == InfoType::RemoteRegionAddress
++                          ? GetInteger(table.GetResearchRemoteRegionStart())
++                          : table.GetResearchRemoteRegionSize();
++        }
++        R_SUCCEED();
++    }
+     case InfoType::CoreMask:
+     case InfoType::PriorityMask:
+     case InfoType::AliasRegionAddress:
+--- a/src/core/hle/kernel/svc/svc_thread.cpp
++++ b/src/core/hle/kernel/svc/svc_thread.cpp
+@@ -16,8 +16,16 @@
+ namespace Kernel::Svc {
+ namespace {
+ 
+-constexpr bool IsValidVirtualCoreId(int32_t core_id) {
+-    return (0 <= core_id && core_id < static_cast<int32_t>(Core::Hardware::NUM_CPU_CORES));
++bool IsValidVirtualCoreId(const KProcess& process, int32_t core_id) {
++    // The kernel already stores virtual affinity and translates virtual IDs via
++    // VirtualToPhysicalCoreMap. The verified research process requests core5.
++    // Expose this existing virtual scheduler model, not extra physical CPUs.
++    // Ordinary applications keep the original four-core validation.
++    const bool research_virtual = process.GetProgramId() == 0x0400c3f00006e000ULL &&
++                                  process.GetPageTable().HasResearchRemoteRegion();
++    const auto count = research_virtual ? Core::Hardware::NumVirtualCores
++                                       : Core::Hardware::NUM_CPU_CORES;
++    return core_id >= 0 && static_cast<size_t>(core_id) < count;
+ }
+ 
+ } // Anonymous namespace
+@@ -38,7 +46,7 @@
+     }
+ 
+     // Validate arguments.
+-    R_UNLESS(IsValidVirtualCoreId(core_id), ResultInvalidCoreId);
++    R_UNLESS(IsValidVirtualCoreId(process, core_id), ResultInvalidCoreId);
+     R_UNLESS(((1ull << core_id) & process.GetCoreMask()) != 0, ResultInvalidCoreId);
+ 
+     R_UNLESS(HighestThreadPriority <= priority && priority <= LowestThreadPriority,
+@@ -262,7 +270,7 @@
+         R_UNLESS(affinity_mask != 0, ResultInvalidCombination);
+ 
+         // Validate the core id.
+-        if (IsValidVirtualCoreId(core_id)) {
++        if (IsValidVirtualCoreId(GetCurrentProcess(system.Kernel()), core_id)) {
+             R_UNLESS(((1ULL << core_id) & affinity_mask) != 0, ResultInvalidCombination);
+         } else {
+             R_UNLESS(core_id == IdealCoreNoUpdate || core_id == IdealCoreDontCare,
+--- a/src/core/hle/kernel/svc_types.h
++++ b/src/core/hle/kernel/svc_types.h
+@@ -157,6 +157,8 @@
+     IsSvcPermitted = 26,
+     IoRegionHint = 27,
+     AliasRegionExtraSize = 28,
++    RemoteRegionAddress = 29,
++    RemoteRegionSize = 30,
+ 
+     TransferMemoryHint = 34,
+ 
+--- a/src/core/hle/service/am/service/application_proxy.cpp
++++ b/src/core/hle/service/am/service/application_proxy.cpp
+@@ -1,6 +1,8 @@
+ // SPDX-FileCopyrightText: Copyright 2024 yuzu Emulator Project
+ // SPDX-License-Identifier: GPL-2.0-or-later
+ 
++#include <mutex>
++#include "core/hle/kernel/k_process.h"
+ #include "core/hle/service/am/service/applet_common_functions.h"
+ #include "core/hle/service/am/service/application_functions.h"
+ #include "core/hle/service/am/service/application_proxy.h"
+@@ -16,10 +18,95 @@
+ 
+ namespace Service::AM {
+ 
++// Explicit, fixed research HLE policy, not a claim about retail GPU quotas.
++// The actual SDK GetGraphicsScalingParameters returns three u32s; its scale
++// conversion accepts 10/20/30. SetScreenRatioForDebug takes two unsigned values.
++// Choose legal scale 10 (public enum 0) with unmodified display ratio 1:1.
++// This policy is only exposed by the guarded verified-process attribute2 proxy.
++// Dynamic quota changes/debug mutations and retail scheduling are unsupported.
++struct GraphicsScalingParameters {
++    u32 scale;
++    u32 ratio_numerator;
++    u32 ratio_denominator;
++};
++static_assert(sizeof(GraphicsScalingParameters) == 12);
++static_assert(offsetof(GraphicsScalingParameters, ratio_numerator) == 4);
++static_assert(offsetof(GraphicsScalingParameters, ratio_denominator) == 8);
++struct ResearchGraphicsState {
++    std::mutex lock;
++    const GraphicsScalingParameters fixed_parameters{10, 1, 1};
++    bool notification_enabled{};
++};
++
++class IGraphicsScalingParametersFunctions final
++    : public ServiceFramework<IGraphicsScalingParametersFunctions> {
++public:
++    IGraphicsScalingParametersFunctions(Core::System& system_,
++                                        std::shared_ptr<ResearchGraphicsState> state)
++        : ServiceFramework{system_, "IGraphicsScalingParametersFunctions"}, m_state{std::move(state)} {
++        static const FunctionInfo functions[] = {
++            {10, D<&IGraphicsScalingParametersFunctions::GetParameters>, "GetGraphicsScalingParameters"},
++            {1000, nullptr, "SetSupportingGraphicsScalingParametersForDebug"},
++            {1010, nullptr, "SetGpuQuotaForDebug"},
++            {1020, nullptr, "ClearGpuQuotaForDebug"},
++            {1030, nullptr, "SetScreenRatioForDebug"},
++            {1040, nullptr, "ClearScreenRatioForDebug"},
++            {1050, D<&IGraphicsScalingParametersFunctions::SetNotificationEnabled>,
++             "SetGraphicsScaleChangedNotificationEnabled"},
++        };
++        RegisterHandlers(functions);
++    }
++private:
++    Result GetParameters(Out<GraphicsScalingParameters> out_parameters) {
++        std::scoped_lock lk{m_state->lock};
++        *out_parameters = m_state->fixed_parameters;
++        LOG_INFO(Service_AM, "research fixed graphics policy: scale={}, ratio={}/{}; retail quotas unmodelled",
++                 m_state->fixed_parameters.scale, m_state->fixed_parameters.ratio_numerator,
++                 m_state->fixed_parameters.ratio_denominator);
++        R_SUCCEED();
++    }
++    Result SetNotificationEnabled(bool enabled) {
++        // Persist the subscription. The fixed policy has no transitions, hence
++        // no change notifications to manufacture. Debug mutation stays absent.
++        std::scoped_lock lk{m_state->lock};
++        m_state->notification_enabled = enabled;
++        LOG_INFO(Service_AM, "research fixed graphics policy notification subscription={}", enabled);
++        R_SUCCEED();
++    }
++    const std::shared_ptr<ResearchGraphicsState> m_state;
++};
++
++class IPerformanceFunctions final : public ServiceFramework<IPerformanceFunctions> {
++public:
++    explicit IPerformanceFunctions(Core::System& system_)
++        : ServiceFramework{system_, "IPerformanceFunctions"} {
++        static const FunctionInfo functions[] = {
++            {0, D<&IPerformanceFunctions::IsCpuOverclockEnabled>, "IsCpuOverclockEnabled"},
++            {1, D<&IPerformanceFunctions::SetCpuOverclockEnabled>, "SetCpuOverclockEnabled"},
++        };
++        RegisterHandlers(functions);
++    }
++private:
++    Result IsCpuOverclockEnabled(Out<bool> out_enabled) {
++        // This research model does not implement an overclocked CPU mode.
++        *out_enabled = false;
++        LOG_INFO(Service_AM, "research CPU overclock supported=false enabled=false");
++        R_SUCCEED();
++    }
++    Result SetCpuOverclockEnabled(bool enabled) {
++        // Never accept an enable request without implementing a clock change.
++        LOG_INFO(Service_AM, "research CPU overclock request={}; enable unsupported", enabled);
++        R_UNLESS(!enabled, ResultUnknown);
++        R_SUCCEED();
++    }
++};
++
+ IApplicationProxy::IApplicationProxy(Core::System& system_, std::shared_ptr<Applet> applet,
+-                                     Kernel::KProcess* process, WindowSystem& window_system)
++                                     Kernel::KProcess* process, WindowSystem& window_system,
++                                     u32 creation_attribute)
+     : ServiceFramework{system_, "IApplicationProxy"},
+-      m_window_system{window_system}, m_process{process}, m_applet{std::move(applet)} {
++      m_window_system{window_system}, m_process{process}, m_applet{std::move(applet)},
++      m_creation_attribute{creation_attribute}, m_graphics_state{std::make_shared<ResearchGraphicsState>()} {
+     // clang-format off
+     static const FunctionInfo functions[] = {
+         {0, D<&IApplicationProxy::GetCommonStateGetter>, "GetCommonStateGetter"},
+@@ -30,6 +117,8 @@
+         {10, D<&IApplicationProxy::GetProcessWindingController>, "GetProcessWindingController"},
+         {11, D<&IApplicationProxy::GetLibraryAppletCreator>, "GetLibraryAppletCreator"},
+         {20, D<&IApplicationProxy::GetApplicationFunctions>, "GetApplicationFunctions"},
++        {40, D<&IApplicationProxy::GetPerformanceFunctions>, "GetPerformanceFunctions"},
++        {60, D<&IApplicationProxy::GetGraphicsScalingParametersFunctions>, "GetGraphicsScalingParametersFunctions"},
+         {1000, D<&IApplicationProxy::GetDebugFunctions>, "GetDebugFunctions"},
+     };
+     // clang-format on
+@@ -103,4 +192,26 @@
+     R_SUCCEED();
+ }
+ 
++Result IApplicationProxy::GetGraphicsScalingParametersFunctions(
++    Out<SharedPointer<IGraphicsScalingParametersFunctions>> out_functions) {
++    // The observed native-client variant is only available to the verified
++    // research process. This does not grant absent parameter/debug operations.
++    R_UNLESS(m_creation_attribute == 2 && m_applet && m_process &&
++                 m_process->GetProgramId() == 0x0400c3f00006e000ULL &&
++                 m_process->GetPageTable().HasResearchRemoteRegion(), ResultUnknown);
++    *out_functions = std::make_shared<IGraphicsScalingParametersFunctions>(system, m_graphics_state);
++    LOG_INFO(Service_AM, "created graphics-scaling research interface; explicit fixed policy");
++    R_SUCCEED();
++}
++
++Result IApplicationProxy::GetPerformanceFunctions(
++    Out<SharedPointer<IPerformanceFunctions>> out_functions) {
++    R_UNLESS(m_creation_attribute == 2 && m_applet && m_process &&
++                 m_process->GetProgramId() == 0x0400c3f00006e000ULL &&
++                 m_process->GetPageTable().HasResearchRemoteRegion(), ResultUnknown);
++    *out_functions = std::make_shared<IPerformanceFunctions>(system);
++    LOG_INFO(Service_AM, "created research performance interface; overclock unsupported");
++    R_SUCCEED();
++}
++
+ } // namespace Service::AM
+--- a/src/core/hle/service/am/service/application_proxy.h
++++ b/src/core/hle/service/am/service/application_proxy.h
+@@ -11,6 +11,9 @@
+ struct Applet;
+ class IAudioController;
+ class IApplicationFunctions;
++class IPerformanceFunctions;
++struct ResearchGraphicsState;
++class IGraphicsScalingParametersFunctions;
+ class ICommonStateGetter;
+ class IDebugFunctions;
+ class IDisplayController;
+@@ -23,8 +26,10 @@
+ class IApplicationProxy final : public ServiceFramework<IApplicationProxy> {
+ public:
+     explicit IApplicationProxy(Core::System& system_, std::shared_ptr<Applet> applet,
+-                               Kernel::KProcess* process, WindowSystem& window_system);
++                               Kernel::KProcess* process, WindowSystem& window_system,
++                               u32 creation_attribute = 0);
+     ~IApplicationProxy();
++    u32 CreationAttribute() const { return m_creation_attribute; }
+ 
+ private:
+     Result GetAudioController(Out<SharedPointer<IAudioController>> out_audio_controller);
+@@ -39,11 +44,16 @@
+         Out<SharedPointer<ILibraryAppletCreator>> out_library_applet_creator);
+     Result GetApplicationFunctions(
+         Out<SharedPointer<IApplicationFunctions>> out_application_functions);
++    Result GetPerformanceFunctions(Out<SharedPointer<IPerformanceFunctions>> out_functions);
++    Result GetGraphicsScalingParametersFunctions(
++        Out<SharedPointer<IGraphicsScalingParametersFunctions>> out_functions);
+ 
+ private:
+     WindowSystem& m_window_system;
+     Kernel::KProcess* const m_process;
+     const std::shared_ptr<Applet> m_applet;
++    const u32 m_creation_attribute;
++    const std::shared_ptr<ResearchGraphicsState> m_graphics_state;
+ };
+ 
+ } // namespace Service::AM
+--- a/src/core/hle/service/am/service/application_proxy_service.cpp
++++ b/src/core/hle/service/am/service/application_proxy_service.cpp
+@@ -2,6 +2,7 @@
+ // SPDX-License-Identifier: GPL-2.0-or-later
+ 
+ #include "core/core.h"
++#include "core/hle/kernel/k_process.h"
+ #include "core/hle/service/am/am.h"
+ #include "core/hle/service/am/applet_manager.h"
+ #include "core/hle/service/am/service/application_proxy.h"
+@@ -16,6 +17,8 @@
+     : ServiceFramework{system_, "appletOE"}, m_window_system{window_system} {
+     static const FunctionInfo functions[] = {
+         {0, D<&IApplicationProxyService::OpenApplicationProxy>, "OpenApplicationProxy"},
++        {10, D<&IApplicationProxyService::OpenApplicationProxyWithFlags>,
++         "OpenApplicationProxyWithFlags"},
+     };
+     RegisterHandlers(functions);
+ }
+@@ -37,6 +40,31 @@
+     }
+ }
+ 
++Result IApplicationProxyService::OpenApplicationProxyWithFlags(
++    Out<SharedPointer<IApplicationProxy>> out_application_proxy, u32 flags, ClientProcessId pid,
++    InCopyHandle<Kernel::KProcess> process_handle) {
++    LOG_DEBUG(Service_AM, "called, flags={:#x}", flags);
++    if (flags == 0) {
++        R_RETURN(OpenApplicationProxy(out_application_proxy, pid, process_handle));
++    }
++    // Observed attribute 2 is an experimental native-client proxy variant.
++    // Its full retail semantics are not asserted. Preserve it on the real proxy,
++    // restrict to the verified research process, and expose only implemented
++    // interfaces. Missing subsequent commands still fail, never dummy-success.
++    auto* const process = process_handle.Get();
++    R_UNLESS(flags == 2 && process && process->GetProgramId() == 0x0400c3f00006e000ULL &&
++                 process->GetProcessId() == pid.pid &&
++                 process->GetPageTable().HasResearchRemoteRegion(), ResultUnknown);
++    const auto applet = this->GetAppletFromProcessId(pid);
++    R_UNLESS(applet, ResultUnknown);
++    auto proxy = std::make_shared<IApplicationProxy>(system, applet, process, m_window_system, flags);
++    LOG_DEBUG(Service_AM, "created real application proxy: attribute={}, pid={}",
++              proxy->CreationAttribute(), pid.pid);
++    *out_application_proxy = std::move(proxy);
++    R_SUCCEED();
++
++}
++
+ std::shared_ptr<Applet> IApplicationProxyService::GetAppletFromProcessId(ProcessId process_id) {
+     return m_window_system.GetByAppletResourceUserId(process_id.pid);
+ }
+--- a/src/core/hle/service/am/service/application_proxy_service.h
++++ b/src/core/hle/service/am/service/application_proxy_service.h
+@@ -23,6 +23,10 @@
+     Result OpenApplicationProxy(Out<SharedPointer<IApplicationProxy>> out_application_proxy,
+                                 ClientProcessId pid, InCopyHandle<Kernel::KProcess> process_handle);
+ 
++    Result OpenApplicationProxyWithFlags(
++        Out<SharedPointer<IApplicationProxy>> out_application_proxy, u32 flags, ClientProcessId pid,
++        InCopyHandle<Kernel::KProcess> process_handle);
++
+ private:
+     std::shared_ptr<Applet> GetAppletFromProcessId(ProcessId pid);
+ 
+--- a/src/core/hle/service/filesystem/fsp/fs_i_storage.cpp
++++ b/src/core/hle/service/filesystem/fsp/fs_i_storage.cpp
+@@ -5,6 +5,7 @@
+ // SPDX-License-Identifier: GPL-2.0-or-later
+ 
+ #include "core/file_sys/errors.h"
++#include "core/file_sys/vfs/vfs_read_error.h"
+ #include "core/hle/service/cmif_serialization.h"
+ #include "core/hle/service/filesystem/fsp/fs_i_storage.h"
+ 
+@@ -32,7 +33,13 @@
+     R_UNLESS(offset >= 0, FileSys::ResultInvalidOffset);
+ 
+     // Read the data from the Storage backend
+-    backend->Read(out_bytes.data(), length, offset);
++    try {
++        backend->Read(out_bytes.data(), length, offset);
++    } catch (const FileSys::VfsReadError& error) {
++        LOG_ERROR(Service_FS, "VFS storage read failed at offset={:#x}, length={}: {}",
++                  offset, length, error.what());
++        R_RETURN(FileSys::ResultUnexpectedInCompressedStorageA);
++    }
+ 
+     R_SUCCEED();
+ }
+--- /dev/null
++++ b/src/core/loader/development_factory.cpp
+@@ -0,0 +1,66 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++#include "core/loader/development_factory.h"
++
++#include <limits>
++#include <mutex>
++#include <stdexcept>
++#include <utility>
++#include "core/loader/loader.h"
++
++namespace Loader {
++namespace {
++struct DevelopmentRegistry {
++    std::mutex mutex;
++    DevelopmentFactory factory;
++    u64 sequence = 0;
++    u64 owner = 0;
++};
++DevelopmentRegistry& Registry() {
++    static DevelopmentRegistry registry;
++    return registry;
++}
++} // namespace
++
++u64 InstallDevelopmentFactory(DevelopmentFactory factory) {
++    auto& registry = Registry();
++    DevelopmentFactory displaced;
++    u64 token;
++    {
++        std::lock_guard lock{registry.mutex};
++        if (registry.sequence == std::numeric_limits<u64>::max())
++            throw std::overflow_error("Development factory ownership tokens exhausted");
++        token = ++registry.sequence;
++        displaced.swap(registry.factory);
++        registry.factory.swap(factory);
++        registry.owner = token;
++    }
++    // Captured objects may reenter the registry when destroyed.
++    return token;
++}
++
++bool RemoveDevelopmentFactory(u64 token) {
++    auto& registry = Registry();
++    DevelopmentFactory displaced;
++    {
++        std::lock_guard lock{registry.mutex};
++        if (token == 0 || token != registry.owner) return false;
++        displaced.swap(registry.factory);
++        registry.owner = 0;
++    }
++    return true;
++}
++
++std::unique_ptr<AppLoader> TryDevelopmentFactory(Core::System& system,
++                                                FileSys::VirtualFile file,
++                                                u64 program_id,
++                                                std::size_t program_index) {
++    if (!file) return {};
++    DevelopmentFactory factory;
++    {
++        auto& registry = Registry();
++        std::lock_guard lock{registry.mutex};
++        factory = registry.factory;
++    }
++    return factory ? factory(system, std::move(file), program_id, program_index) : nullptr;
++}
++} // namespace Loader
+--- /dev/null
++++ b/src/core/loader/development_factory.h
+@@ -0,0 +1,31 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++#pragma once
++
++#include <cstddef>
++#include <functional>
++#include <memory>
++#include "common/common_types.h"
++#include "core/file_sys/vfs/vfs_types.h"
++
++namespace Core { class System; }
++
++namespace Loader {
++class AppLoader;
++
++// An explicitly installed development hook. Returning null leaves ordinary
++// loader resolution intact. Callback exceptions propagate to the caller.
++using DevelopmentFactory = std::function<std::unique_ptr<AppLoader>(
++    Core::System&, FileSys::VirtualFile, u64 program_id, std::size_t program_index)>;
++
++// Each install replaces the previous hook and returns a nonzero ownership token.
++// Installing an empty factory clears behavior but still creates a new lease.
++u64 InstallDevelopmentFactory(DevelopmentFactory factory);
++// An old lease cannot remove a factory installed after it.
++bool RemoveDevelopmentFactory(u64 token);
++// Snapshot the callback while locked, then invoke outside the registry mutex.
++// A snapshot may finish after its lease is removed; removal is not cancellation.
++std::unique_ptr<AppLoader> TryDevelopmentFactory(Core::System& system,
++                                                FileSys::VirtualFile file,
++                                                u64 program_id,
++                                                std::size_t program_index);
++} // namespace Loader
+--- a/src/core/loader/loader.cpp
++++ b/src/core/loader/loader.cpp
+@@ -22,6 +22,7 @@
+ #include "core/file_sys/submission_package.h"
+ #include "core/hle/kernel/k_process.h"
+ #include "core/loader/deconstructed_rom_directory.h"
++#include "core/loader/development_factory.h"
+ #include "core/loader/kip.h"
+ #include "core/loader/nax.h"
+ #include "core/loader/nca.h"
+@@ -355,6 +356,10 @@
+         return nullptr;
+     }
+ 
++    if (auto development = TryDevelopmentFactory(system, file, program_id, program_index)) {
++        return development;
++    }
++
+     if (const auto indexed = ResolveIndexedProgram(system, program_id, program_index)) {
+         return std::make_unique<AppLoader_NCA>(
+             indexed->file, indexed->update_only ? indexed->program_id : 0);
+--- a/src/core/memory.cpp
++++ b/src/core/memory.cpp
+@@ -649,6 +649,50 @@
+             std::memcpy(ptr, &data, sizeof(T));
+     }
+ 
++    u32* PrepareAtomicPointer32(Common::ProcessAddress vaddr) {
++        const u64 address = GetInteger(vaddr);
++        if ((address & 3) != 0) return nullptr;
++        u8* pointer = GetPointerImpl(address, []() {}, [&]() {
++            HandleRasterizerDownload(address, sizeof(u32));
++            HandleRasterizerWrite(address, sizeof(u32));
++        });
++        if (!pointer || (reinterpret_cast<uintptr_t>(pointer) & 3) != 0) return nullptr;
++        return reinterpret_cast<u32*>(pointer);
++    }
++
++    u16* PrepareAtomicPointer16(Common::ProcessAddress vaddr) {
++        const u64 address = GetInteger(vaddr);
++        if ((address & 1) != 0) return nullptr;
++        u8* pointer = GetPointerImpl(address, []() {}, [&]() {
++            HandleRasterizerDownload(address, sizeof(u16));
++            HandleRasterizerWrite(address, sizeof(u16));
++        });
++        if (!pointer || (reinterpret_cast<uintptr_t>(pointer) & 1) != 0) return nullptr;
++        return reinterpret_cast<u16*>(pointer);
++    }
++
++    u8* PrepareAtomicPointer8(Common::ProcessAddress vaddr) {
++        const u64 address = GetInteger(vaddr);
++        if ((address & 0) != 0) return nullptr;
++        u8* pointer = GetPointerImpl(address, []() {}, [&]() {
++            HandleRasterizerDownload(address, sizeof(u8));
++            HandleRasterizerWrite(address, sizeof(u8));
++        });
++        if (!pointer || (reinterpret_cast<uintptr_t>(pointer) & 0) != 0) return nullptr;
++        return reinterpret_cast<u8*>(pointer);
++    }
++
++    u64* PrepareAtomicPointer64(Common::ProcessAddress vaddr) {
++        const u64 address = GetInteger(vaddr);
++        if ((address & 7) != 0) return nullptr;
++        u8* pointer = GetPointerImpl(address, []() {}, [&]() {
++            HandleRasterizerDownload(address, sizeof(u64));
++            HandleRasterizerWrite(address, sizeof(u64));
++        });
++        if (!pointer || (reinterpret_cast<uintptr_t>(pointer) & 7) != 0) return nullptr;
++        return reinterpret_cast<u64*>(pointer);
++    }
++
+     template <typename T>
+     bool WriteExclusive(Common::ProcessAddress vaddr, const T data, const T expected) {
+         u8* const ptr = GetPointerImpl(
+@@ -840,6 +884,22 @@
+     return impl->GetPointerSilent(vaddr);
+ }
+ 
++u32* Memory::PrepareAtomicPointer32(Common::ProcessAddress vaddr) {
++    return impl->PrepareAtomicPointer32(vaddr);
++}
++
++u16* Memory::PrepareAtomicPointer16(Common::ProcessAddress vaddr) {
++    return impl->PrepareAtomicPointer16(vaddr);
++}
++
++u8* Memory::PrepareAtomicPointer8(Common::ProcessAddress vaddr) {
++    return impl->PrepareAtomicPointer8(vaddr);
++}
++
++u64* Memory::PrepareAtomicPointer64(Common::ProcessAddress vaddr) {
++    return impl->PrepareAtomicPointer64(vaddr);
++}
++
+ const u8* Memory::GetPointer(Common::ProcessAddress vaddr) const {
+     return impl->GetPointer(vaddr);
+ }
+--- a/src/core/memory.h
++++ b/src/core/memory.h
+@@ -148,6 +148,13 @@
+     u8* GetPointer(Common::ProcessAddress vaddr);
+     u8* GetPointerSilent(Common::ProcessAddress vaddr);
+ 
++    // Prepares read-download and possible-write coherence outside kernel and
++    // exclusive-monitor locks. Caller must revalidate/pin VM lifetime before CAS.
++    u32* PrepareAtomicPointer32(Common::ProcessAddress vaddr);
++    u16* PrepareAtomicPointer16(Common::ProcessAddress vaddr);
++    u8* PrepareAtomicPointer8(Common::ProcessAddress vaddr);
++    u64* PrepareAtomicPointer64(Common::ProcessAddress vaddr);
++
+     template <typename T>
+     T* GetPointer(Common::ProcessAddress vaddr) {
+         return reinterpret_cast<T*>(GetPointer(vaddr));
+--- /dev/null
++++ b/src/core/research/native_startup_profile.h
+@@ -0,0 +1,45 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++// Explicit native diagnostic route policy; no authentication or retail-capacity claim.
++#pragma once
++#include <cstdint>
++#include <cstdlib>
++#include <cstdio>
++#include <string_view>
++namespace Core::NativeStartupResearch {
++inline constexpr std::uint64_t ProgramId = 0x0400c3f00006e000ULL;
++struct Profiles { bool valid = true; bool active = false; bool pauth = false; bool remote = false; };
++inline std::string_view Environment(const char* name) {
++    const char* value = std::getenv(name);
++    return value ? std::string_view(value) : std::string_view{};
++}
++inline Profiles ReadSelection() {
++    const auto active = Environment("PROSPERO_RESEARCH_NATIVE_ROUTE_ACTIVE");
++    if (active.empty() || active == "0") return {};
++    if (active != "1") return {false};
++    const auto pauth = Environment("PROSPERO_RESEARCH_PAUTH_DISABLED_PROFILE");
++    const auto remote = Environment("PROSPERO_RESEARCH_REMOTE_REGION_PROFILE");
++    const bool valid = (pauth.empty() || pauth == "0" || pauth == "1") &&
++                       (remote.empty() || remote == "0" || remote == "1");
++    return {valid, true, pauth == "1", remote == "1"};
++}
++enum class TargetSelection { Off, Enabled, UnsupportedTargetShape };
++constexpr TargetSelection SelectPAuth(Profiles selection, std::uint64_t program_id,
++                                     bool is_application, bool is_64_bit, bool is_39_bit) {
++    if (!selection.active || !selection.pauth || program_id != ProgramId)
++        return TargetSelection::Off;
++    if (!is_application || !is_64_bit || !is_39_bit)
++        return TargetSelection::UnsupportedTargetShape;
++    return TargetSelection::Enabled;
++}
++constexpr bool IsFailClosedTarget(Profiles selection, std::uint64_t program_id,
++                                  bool is_application, bool is_64_bit, bool is_39_bit) {
++    return selection.active && program_id == ProgramId && is_application && is_64_bit && is_39_bit;
++}
++[[noreturn]] inline void AbortUnsupportedEncoding(std::uint64_t pc, std::uint32_t opcode,
++                                                 bool code_valid) {
++    std::fprintf(stderr, "NATIVE_RESEARCH unallocated_encoding pc=%016llx opcode=%08x code_valid=%u action=abort_no_fallthrough\n",
++                 static_cast<unsigned long long>(pc), opcode, code_valid);
++    std::fflush(stderr);
++    std::abort(); // Explicit research-only fallback; no proved graceful stop is assumed.
++}
++} // namespace Core::NativeStartupResearch
+--- a/src/dynarmic/src/dynarmic/backend/arm64/a64_address_space.cpp
++++ b/src/dynarmic/src/dynarmic/backend/arm64/a64_address_space.cpp
+@@ -367,7 +367,7 @@
+ void A64AddressSpace::GenerateIR(IR::Block& ir_block, IR::LocationDescriptor descriptor) const {
+     ir_block.Reset(descriptor);
+     const auto get_code = [this](u64 vaddr) { return conf.callbacks->MemoryReadCode(vaddr); };
+-    A64::Translate(ir_block, A64::LocationDescriptor{descriptor}, get_code, {conf.define_unpredictable_behaviour, conf.wall_clock_cntpct});
++    A64::Translate(ir_block, A64::LocationDescriptor{descriptor}, get_code, {conf.define_unpredictable_behaviour, conf.wall_clock_cntpct, true, conf.research_pauth_disabled_profile});
+     Optimization::Optimize(ir_block, conf, {});
+ }
+ 
+--- a/src/dynarmic/src/dynarmic/backend/x64/a64_emit_x64.cpp
++++ b/src/dynarmic/src/dynarmic/backend/x64/a64_emit_x64.cpp
+@@ -119,6 +119,116 @@
+ 
+     for (auto& inst : block.instructions) {
+         auto const opcode = inst.GetOpcode();
++        // The appended research opcode preserves every old A32/A64 numeric ID;
++        // dispatch it before the legacy contiguous A64 handler array indexing.
++        if (opcode == IR::Opcode::A64AtomicCompareExchange32) {
++            EmitA64AtomicCompareExchange32(ctx, &inst);
++            goto finish_this_inst;
++        }
++
++        if (opcode == IR::Opcode::A64AtomicCompareExchange16) {
++            EmitA64AtomicCompareExchange16(ctx, &inst);
++            goto finish_this_inst;
++        }
++
++        if (opcode == IR::Opcode::A64AtomicCompareExchange8) {
++            EmitA64AtomicCompareExchange8(ctx, &inst);
++            goto finish_this_inst;
++        }
++        if (opcode == IR::Opcode::A64AtomicFetchAdd32) {
++            EmitA64AtomicFetchAdd32(ctx, &inst);
++            goto finish_this_inst;
++        }
++
++        if (opcode == IR::Opcode::A64AtomicExchange16) {
++            EmitA64AtomicExchange16(ctx, &inst);
++            goto finish_this_inst;
++        }
++
++        if (opcode == IR::Opcode::A64AtomicFetchXor16) {
++            EmitA64AtomicFetchXor16(ctx, &inst);
++            goto finish_this_inst;
++        }
++
++        if (opcode == IR::Opcode::A64AtomicFetchOr16) {
++            EmitA64AtomicFetchOr16(ctx, &inst);
++            goto finish_this_inst;
++        }
++
++        if (opcode == IR::Opcode::A64AtomicFetchClear16) {
++            EmitA64AtomicFetchClear16(ctx, &inst);
++            goto finish_this_inst;
++        }
++
++        if (opcode == IR::Opcode::A64AtomicFetchAdd16) {
++            EmitA64AtomicFetchAdd16(ctx, &inst);
++            goto finish_this_inst;
++        }
++
++        if (opcode == IR::Opcode::A64AtomicExchange8) {
++            EmitA64AtomicExchange8(ctx, &inst);
++            goto finish_this_inst;
++        }
++
++        if (opcode == IR::Opcode::A64AtomicFetchXor8) {
++            EmitA64AtomicFetchXor8(ctx, &inst);
++            goto finish_this_inst;
++        }
++
++        if (opcode == IR::Opcode::A64AtomicFetchOr8) {
++            EmitA64AtomicFetchOr8(ctx, &inst);
++            goto finish_this_inst;
++        }
++
++        if (opcode == IR::Opcode::A64AtomicFetchClear8) {
++            EmitA64AtomicFetchClear8(ctx, &inst);
++            goto finish_this_inst;
++        }
++
++        if (opcode == IR::Opcode::A64AtomicFetchAdd8) {
++            EmitA64AtomicFetchAdd8(ctx, &inst);
++            goto finish_this_inst;
++        }
++        if (opcode == IR::Opcode::A64AtomicExchange32) {
++            EmitA64AtomicExchange32(ctx, &inst);
++            goto finish_this_inst;
++        }
++        if (opcode == IR::Opcode::A64AtomicFetchXor32) {
++            EmitA64AtomicFetchXor32(ctx, &inst);
++            goto finish_this_inst;
++        }
++        if (opcode == IR::Opcode::A64AtomicFetchAdd64) {
++            EmitA64AtomicFetchAdd64(ctx, &inst);
++            goto finish_this_inst;
++        }
++        if (opcode == IR::Opcode::A64AtomicExchange64) {
++            EmitA64AtomicExchange64(ctx, &inst);
++            goto finish_this_inst;
++        }
++        if (opcode == IR::Opcode::A64AtomicFetchXor64) {
++            EmitA64AtomicFetchXor64(ctx, &inst);
++            goto finish_this_inst;
++        }
++        if (opcode == IR::Opcode::A64AtomicFetchClear64) {
++            EmitA64AtomicFetchClear64(ctx, &inst);
++            goto finish_this_inst;
++        }
++        if (opcode == IR::Opcode::A64AtomicFetchOr64) {
++            EmitA64AtomicFetchOr64(ctx, &inst);
++            goto finish_this_inst;
++        }
++        if (opcode == IR::Opcode::A64AtomicFetchClear32) {
++            EmitA64AtomicFetchClear32(ctx, &inst);
++            goto finish_this_inst;
++        }
++        if (opcode == IR::Opcode::A64AtomicFetchOr32) {
++            EmitA64AtomicFetchOr32(ctx, &inst);
++            goto finish_this_inst;
++        }
++        if (opcode == IR::Opcode::A64AtomicCompareExchange64) {
++            EmitA64AtomicCompareExchange64(ctx, &inst);
++            goto finish_this_inst;
++        }
+         // Call the relevant Emit* member function.
+         switch (opcode) {
+ #define OPCODE(name, type, ...) case IR::Opcode::name: goto opcode_branch;
+--- a/src/dynarmic/src/dynarmic/backend/x64/a64_emit_x64_memory.cpp
++++ b/src/dynarmic/src/dynarmic/backend/x64/a64_emit_x64_memory.cpp
+@@ -7,6 +7,8 @@
+  */
+ 
+ #include <array>
++#include <cstdio>
++#include <cstdlib>
+ #include <initializer_list>
+ #include <tuple>
+ #include <utility>
+@@ -24,6 +26,7 @@
+ #include "dynarmic/backend/x64/perf_map.h"
+ #include "dynarmic/common/spin_lock_x64.h"
+ #include "dynarmic/interface/exclusive_monitor.h"
++#include "dynarmic/common/atomic.h"
+ 
+ namespace Dynarmic::Backend::X64 {
+ 
+@@ -325,6 +328,1099 @@
+     EmitMemoryWrite<128, &A64::UserCallbacks::MemoryWrite>(ctx, inst);
+ }
+ 
++void A64EmitX64::EmitA64AtomicCompareExchange32(A64EmitContext& ctx, IR::Inst* inst) {
++    auto args = ctx.reg_alloc.GetArgumentInfo(inst);
++    ctx.reg_alloc.HostCall(code, inst, {}, args[1], args[2], args[3]);
++#ifdef EDEN_SHARED_JIT_LAYOUT
++    // Shared compiled blocks must use the executing JIT's callback, monitor and
++    // abort target, never the emitter/group owner's captured first-core state.
++    code.mov(code.ABI_PARAM1, code.ABI_JIT_PTR);
++    code.CallLambda([](A64JitState& state, A64::VAddr address, u32 expected, u32 desired) -> u32 {
++        const auto* config = static_cast<const A64::UserConfig*>(state.eden_conf);
++        auto* callbacks = static_cast<A64::UserCallbacks*>(state.eden_callbacks);
++        // eden_jit points to private Jit::Impl, not the public A64::Jit wrapper.
++        // Halt the actual executing state directly with the same atomic primitive
++        // that Impl::HaltExecution uses; never reinterpret its private pointer.
++        if (!config || !callbacks || !state.eden_jit) {
++            std::fputs("CPU_TRACE casa32_runtime_context_missing action=abort_no_fake_success\n", stderr);
++            std::abort();
++        }
++        const auto observed = callbacks->MemoryAtomicCompareExchange32(
++            address, expected, desired, config->global_monitor);
++        if (!observed) {
++            Atomic::Or(&state.halt_reason, static_cast<u32>(HaltReason::MemoryAbort));
++            return 0;
++        }
++        return *observed;
++    });
++#else
++    code.mov(code.ABI_PARAM1, reinterpret_cast<u64>(this));
++    code.CallLambda([](A64EmitX64& emitter, A64::VAddr address, u32 expected, u32 desired) -> u32 {
++        // The callback prepares VM/cache state before acquiring the monitor.
++        // Never hold the monitor across a guest-aware validation callback.
++        const auto observed = emitter.conf.callbacks->MemoryAtomicCompareExchange32(
++            address, expected, desired, emitter.conf.global_monitor);
++        if (!observed) {
++            emitter.jit_interface->HaltExecution(HaltReason::MemoryAbort);
++            return 0; // Not architecturally written: the mandatory check exits first.
++        }
++        return *observed;
++    });
++#endif
++    EmitCheckMemoryAbort(ctx, inst);
++}
++
++void A64EmitX64::EmitA64AtomicCompareExchange16(A64EmitContext& ctx, IR::Inst* inst) {
++    auto args = ctx.reg_alloc.GetArgumentInfo(inst);
++    ctx.reg_alloc.HostCall(code, inst, {}, args[1], args[2], args[3]);
++#ifdef EDEN_SHARED_JIT_LAYOUT
++    // Shared compiled blocks must use the executing JIT's callback, monitor and
++    // abort target, never the emitter/group owner's captured first-core state.
++    code.mov(code.ABI_PARAM1, code.ABI_JIT_PTR);
++    code.CallLambda([](A64JitState& state, A64::VAddr address, u32 expected, u32 desired) -> u32 {
++        const auto* config = static_cast<const A64::UserConfig*>(state.eden_conf);
++        auto* callbacks = static_cast<A64::UserCallbacks*>(state.eden_callbacks);
++        // eden_jit points to private Jit::Impl, not the public A64::Jit wrapper.
++        // Halt the actual executing state directly with the same atomic primitive
++        // that Impl::HaltExecution uses; never reinterpret its private pointer.
++        if (!config || !callbacks || !state.eden_jit) {
++            std::fputs("CPU_TRACE cas16_runtime_context_missing action=abort_no_fake_success\n", stderr);
++            std::abort();
++        }
++        const auto observed = callbacks->MemoryAtomicCompareExchange16(
++            address, static_cast<u16>(expected), static_cast<u16>(desired), config->global_monitor);
++        if (!observed) {
++            Atomic::Or(&state.halt_reason, static_cast<u32>(HaltReason::MemoryAbort));
++            return 0;
++        }
++        return *observed;
++    });
++#else
++    code.mov(code.ABI_PARAM1, reinterpret_cast<u64>(this));
++    code.CallLambda([](A64EmitX64& emitter, A64::VAddr address, u32 expected, u32 desired) -> u32 {
++        // The callback prepares VM/cache state before acquiring the monitor.
++        // Never hold the monitor across a guest-aware validation callback.
++        const auto observed = emitter.conf.callbacks->MemoryAtomicCompareExchange16(
++            address, static_cast<u16>(expected), static_cast<u16>(desired), emitter.conf.global_monitor);
++        if (!observed) {
++            emitter.jit_interface->HaltExecution(HaltReason::MemoryAbort);
++            return 0; // Not architecturally written: the mandatory check exits first.
++        }
++        return *observed;
++    });
++#endif
++    EmitCheckMemoryAbort(ctx, inst);
++}
++
++void A64EmitX64::EmitA64AtomicCompareExchange8(A64EmitContext& ctx, IR::Inst* inst) {
++    auto args = ctx.reg_alloc.GetArgumentInfo(inst);
++    ctx.reg_alloc.HostCall(code, inst, {}, args[1], args[2], args[3]);
++#ifdef EDEN_SHARED_JIT_LAYOUT
++    // Shared compiled blocks must use the executing JIT's callback, monitor and
++    // abort target, never the emitter/group owner's captured first-core state.
++    code.mov(code.ABI_PARAM1, code.ABI_JIT_PTR);
++    code.CallLambda([](A64JitState& state, A64::VAddr address, u32 expected, u32 desired) -> u32 {
++        const auto* config = static_cast<const A64::UserConfig*>(state.eden_conf);
++        auto* callbacks = static_cast<A64::UserCallbacks*>(state.eden_callbacks);
++        // eden_jit points to private Jit::Impl, not the public A64::Jit wrapper.
++        // Halt the actual executing state directly with the same atomic primitive
++        // that Impl::HaltExecution uses; never reinterpret its private pointer.
++        if (!config || !callbacks || !state.eden_jit) {
++            std::fputs("CPU_TRACE cas8_runtime_context_missing action=abort_no_fake_success\n", stderr);
++            std::abort();
++        }
++        const auto observed = callbacks->MemoryAtomicCompareExchange8(
++            address, static_cast<u8>(expected), static_cast<u8>(desired), config->global_monitor);
++        if (!observed) {
++            Atomic::Or(&state.halt_reason, static_cast<u32>(HaltReason::MemoryAbort));
++            return 0;
++        }
++        return *observed;
++    });
++#else
++    code.mov(code.ABI_PARAM1, reinterpret_cast<u64>(this));
++    code.CallLambda([](A64EmitX64& emitter, A64::VAddr address, u32 expected, u32 desired) -> u32 {
++        // The callback prepares VM/cache state before acquiring the monitor.
++        // Never hold the monitor across a guest-aware validation callback.
++        const auto observed = emitter.conf.callbacks->MemoryAtomicCompareExchange8(
++            address, static_cast<u8>(expected), static_cast<u8>(desired), emitter.conf.global_monitor);
++        if (!observed) {
++            emitter.jit_interface->HaltExecution(HaltReason::MemoryAbort);
++            return 0; // Not architecturally written: the mandatory check exits first.
++        }
++        return *observed;
++    });
++#endif
++    EmitCheckMemoryAbort(ctx, inst);
++}
++
++void A64EmitX64::EmitA64AtomicCompareExchange64(A64EmitContext& ctx, IR::Inst* inst) {
++    auto args = ctx.reg_alloc.GetArgumentInfo(inst);
++    ctx.reg_alloc.HostCall(code, inst, {}, args[1], args[2], args[3]);
++#ifdef EDEN_SHARED_JIT_LAYOUT
++    // Shared compiled blocks must use the executing JIT's callback, monitor and
++    // abort target, never the emitter/group owner's captured first-core state.
++    code.mov(code.ABI_PARAM1, code.ABI_JIT_PTR);
++    code.CallLambda([](A64JitState& state, A64::VAddr address, u64 expected, u64 desired) -> u64 {
++        const auto* config = static_cast<const A64::UserConfig*>(state.eden_conf);
++        auto* callbacks = static_cast<A64::UserCallbacks*>(state.eden_callbacks);
++        // eden_jit points to private Jit::Impl, not the public A64::Jit wrapper.
++        // Halt the actual executing state directly with the same atomic primitive
++        // that Impl::HaltExecution uses; never reinterpret its private pointer.
++        if (!config || !callbacks || !state.eden_jit) {
++            std::fputs("CPU_TRACE casa64_runtime_context_missing action=abort_no_fake_success\n", stderr);
++            std::abort();
++        }
++        const auto observed = callbacks->MemoryAtomicCompareExchange64(
++            address, expected, desired, config->global_monitor);
++        if (!observed) {
++            Atomic::Or(&state.halt_reason, static_cast<u32>(HaltReason::MemoryAbort));
++            return 0;
++        }
++        return *observed;
++    });
++#else
++    code.mov(code.ABI_PARAM1, reinterpret_cast<u64>(this));
++    code.CallLambda([](A64EmitX64& emitter, A64::VAddr address, u64 expected, u64 desired) -> u64 {
++        // The callback prepares VM/cache state before acquiring the monitor.
++        // Never hold the monitor across a guest-aware validation callback.
++        const auto observed = emitter.conf.callbacks->MemoryAtomicCompareExchange64(
++            address, expected, desired, emitter.conf.global_monitor);
++        if (!observed) {
++            emitter.jit_interface->HaltExecution(HaltReason::MemoryAbort);
++            return 0; // Not architecturally written: the mandatory check exits first.
++        }
++        return *observed;
++    });
++#endif
++    EmitCheckMemoryAbort(ctx, inst);
++}
++
++
++// A failed checked CAS only observes memory. The first successful checked CAS
++// writes old+operand and returns exactly that old value. No plain load/store or
++// exclusive-store status is substituted. Each attempt revalidates VM/coherence
++// and takes the existing short monitor-protected real host CAS path.
++static std::optional<u32> AtomicFetchAdd32Checked(A64::UserCallbacks& callbacks,
++        ExclusiveMonitor* monitor, A64::VAddr address, u32 operand) {
++    u32 expected = 0;
++    for (;;) {
++        const u32 desired = static_cast<u32>(expected + operand);
++        const auto observed = callbacks.MemoryAtomicCompareExchange32(address, expected, desired, monitor);
++        if (!observed || *observed == expected) return observed;
++        expected = *observed;
++    }
++}
++
++void A64EmitX64::EmitA64AtomicFetchAdd32(A64EmitContext& ctx, IR::Inst* inst) {
++    auto args = ctx.reg_alloc.GetArgumentInfo(inst);
++    ctx.reg_alloc.HostCall(code, inst, {}, args[1], args[2]);
++#ifdef EDEN_SHARED_JIT_LAYOUT
++    code.mov(code.ABI_PARAM1, code.ABI_JIT_PTR);
++    code.CallLambda([](A64JitState& state, A64::VAddr address, u32 operand) -> u32 {
++        const auto* config = static_cast<const A64::UserConfig*>(state.eden_conf);
++        auto* callbacks = static_cast<A64::UserCallbacks*>(state.eden_callbacks);
++        if (!config || !callbacks || !state.eden_jit) {
++            std::fputs("CPU_TRACE ldadd32_runtime_context_missing action=abort_no_fake_success\n", stderr);
++            std::abort();
++        }
++        const auto observed = AtomicFetchAdd32Checked(*callbacks, config->global_monitor, address, operand);
++        if (!observed) {
++            Atomic::Or(&state.halt_reason, static_cast<u32>(HaltReason::MemoryAbort));
++            return 0; // Fault placeholder is never written back architecturally.
++        }
++        return *observed;
++    });
++#else
++    code.mov(code.ABI_PARAM1, reinterpret_cast<u64>(this));
++    code.CallLambda([](A64EmitX64& emitter, A64::VAddr address, u32 operand) -> u32 {
++        const auto observed = AtomicFetchAdd32Checked(*emitter.conf.callbacks,
++            emitter.conf.global_monitor, address, operand);
++        if (!observed) {
++            emitter.jit_interface->HaltExecution(HaltReason::MemoryAbort);
++            return 0;
++        }
++        return *observed;
++    });
++#endif
++    EmitCheckMemoryAbort(ctx, inst);
++}
++
++// Narrow typed checked CAS loop; arithmetic truncates only the memory operand.
++static std::optional<u32> AtomicExchange16Checked(A64::UserCallbacks& callbacks,
++        ExclusiveMonitor* monitor, A64::VAddr address, u32 operand) {
++    u16 expected = 0;
++    for (;;) {
++        const u16 desired = static_cast<u16>(operand);
++        const auto observed = callbacks.MemoryAtomicCompareExchange16(address, expected, desired, monitor);
++        if (!observed || *observed == expected) return observed;
++        expected = *observed;
++    }
++}
++
++void A64EmitX64::EmitA64AtomicExchange16(A64EmitContext& ctx, IR::Inst* inst) {
++    auto args = ctx.reg_alloc.GetArgumentInfo(inst);
++    ctx.reg_alloc.HostCall(code, inst, {}, args[1], args[2]);
++#ifdef EDEN_SHARED_JIT_LAYOUT
++    code.mov(code.ABI_PARAM1, code.ABI_JIT_PTR);
++    code.CallLambda([](A64JitState& state, A64::VAddr address, u32 operand) -> u32 {
++        const auto* config = static_cast<const A64::UserConfig*>(state.eden_conf);
++        auto* callbacks = static_cast<A64::UserCallbacks*>(state.eden_callbacks);
++        if (!config || !callbacks || !state.eden_jit) {
++            std::fputs("CPU_TRACE swp16orders_runtime_context_missing action=abort_no_fake_success\n", stderr);
++            std::abort();
++        }
++        const auto observed = AtomicExchange16Checked(*callbacks, config->global_monitor, address, operand);
++        if (!observed) {
++            Atomic::Or(&state.halt_reason, static_cast<u32>(HaltReason::MemoryAbort));
++            return 0; // Fault placeholder is never written back architecturally.
++        }
++        return *observed;
++    });
++#else
++    code.mov(code.ABI_PARAM1, reinterpret_cast<u64>(this));
++    code.CallLambda([](A64EmitX64& emitter, A64::VAddr address, u32 operand) -> u32 {
++        const auto observed = AtomicExchange16Checked(*emitter.conf.callbacks,
++            emitter.conf.global_monitor, address, operand);
++        if (!observed) {
++            emitter.jit_interface->HaltExecution(HaltReason::MemoryAbort);
++            return 0;
++        }
++        return *observed;
++    });
++#endif
++    EmitCheckMemoryAbort(ctx, inst);
++}
++
++// Narrow typed checked CAS loop; arithmetic truncates only the memory operand.
++static std::optional<u32> AtomicFetchXor16Checked(A64::UserCallbacks& callbacks,
++        ExclusiveMonitor* monitor, A64::VAddr address, u32 operand) {
++    u16 expected = 0;
++    for (;;) {
++        const u16 desired = static_cast<u16>(expected ^ operand);
++        const auto observed = callbacks.MemoryAtomicCompareExchange16(address, expected, desired, monitor);
++        if (!observed || *observed == expected) return observed;
++        expected = *observed;
++    }
++}
++
++void A64EmitX64::EmitA64AtomicFetchXor16(A64EmitContext& ctx, IR::Inst* inst) {
++    auto args = ctx.reg_alloc.GetArgumentInfo(inst);
++    ctx.reg_alloc.HostCall(code, inst, {}, args[1], args[2]);
++#ifdef EDEN_SHARED_JIT_LAYOUT
++    code.mov(code.ABI_PARAM1, code.ABI_JIT_PTR);
++    code.CallLambda([](A64JitState& state, A64::VAddr address, u32 operand) -> u32 {
++        const auto* config = static_cast<const A64::UserConfig*>(state.eden_conf);
++        auto* callbacks = static_cast<A64::UserCallbacks*>(state.eden_callbacks);
++        if (!config || !callbacks || !state.eden_jit) {
++            std::fputs("CPU_TRACE ldeor16orders_runtime_context_missing action=abort_no_fake_success\n", stderr);
++            std::abort();
++        }
++        const auto observed = AtomicFetchXor16Checked(*callbacks, config->global_monitor, address, operand);
++        if (!observed) {
++            Atomic::Or(&state.halt_reason, static_cast<u32>(HaltReason::MemoryAbort));
++            return 0; // Fault placeholder is never written back architecturally.
++        }
++        return *observed;
++    });
++#else
++    code.mov(code.ABI_PARAM1, reinterpret_cast<u64>(this));
++    code.CallLambda([](A64EmitX64& emitter, A64::VAddr address, u32 operand) -> u32 {
++        const auto observed = AtomicFetchXor16Checked(*emitter.conf.callbacks,
++            emitter.conf.global_monitor, address, operand);
++        if (!observed) {
++            emitter.jit_interface->HaltExecution(HaltReason::MemoryAbort);
++            return 0;
++        }
++        return *observed;
++    });
++#endif
++    EmitCheckMemoryAbort(ctx, inst);
++}
++
++// Narrow typed checked CAS loop; arithmetic truncates only the memory operand.
++static std::optional<u32> AtomicFetchOr16Checked(A64::UserCallbacks& callbacks,
++        ExclusiveMonitor* monitor, A64::VAddr address, u32 operand) {
++    u16 expected = 0;
++    for (;;) {
++        const u16 desired = static_cast<u16>(expected | operand);
++        const auto observed = callbacks.MemoryAtomicCompareExchange16(address, expected, desired, monitor);
++        if (!observed || *observed == expected) return observed;
++        expected = *observed;
++    }
++}
++
++void A64EmitX64::EmitA64AtomicFetchOr16(A64EmitContext& ctx, IR::Inst* inst) {
++    auto args = ctx.reg_alloc.GetArgumentInfo(inst);
++    ctx.reg_alloc.HostCall(code, inst, {}, args[1], args[2]);
++#ifdef EDEN_SHARED_JIT_LAYOUT
++    code.mov(code.ABI_PARAM1, code.ABI_JIT_PTR);
++    code.CallLambda([](A64JitState& state, A64::VAddr address, u32 operand) -> u32 {
++        const auto* config = static_cast<const A64::UserConfig*>(state.eden_conf);
++        auto* callbacks = static_cast<A64::UserCallbacks*>(state.eden_callbacks);
++        if (!config || !callbacks || !state.eden_jit) {
++            std::fputs("CPU_TRACE ldset16orders_runtime_context_missing action=abort_no_fake_success\n", stderr);
++            std::abort();
++        }
++        const auto observed = AtomicFetchOr16Checked(*callbacks, config->global_monitor, address, operand);
++        if (!observed) {
++            Atomic::Or(&state.halt_reason, static_cast<u32>(HaltReason::MemoryAbort));
++            return 0; // Fault placeholder is never written back architecturally.
++        }
++        return *observed;
++    });
++#else
++    code.mov(code.ABI_PARAM1, reinterpret_cast<u64>(this));
++    code.CallLambda([](A64EmitX64& emitter, A64::VAddr address, u32 operand) -> u32 {
++        const auto observed = AtomicFetchOr16Checked(*emitter.conf.callbacks,
++            emitter.conf.global_monitor, address, operand);
++        if (!observed) {
++            emitter.jit_interface->HaltExecution(HaltReason::MemoryAbort);
++            return 0;
++        }
++        return *observed;
++    });
++#endif
++    EmitCheckMemoryAbort(ctx, inst);
++}
++
++// Narrow typed checked CAS loop; arithmetic truncates only the memory operand.
++static std::optional<u32> AtomicFetchClear16Checked(A64::UserCallbacks& callbacks,
++        ExclusiveMonitor* monitor, A64::VAddr address, u32 operand) {
++    u16 expected = 0;
++    for (;;) {
++        const u16 desired = static_cast<u16>(expected & ~operand);
++        const auto observed = callbacks.MemoryAtomicCompareExchange16(address, expected, desired, monitor);
++        if (!observed || *observed == expected) return observed;
++        expected = *observed;
++    }
++}
++
++void A64EmitX64::EmitA64AtomicFetchClear16(A64EmitContext& ctx, IR::Inst* inst) {
++    auto args = ctx.reg_alloc.GetArgumentInfo(inst);
++    ctx.reg_alloc.HostCall(code, inst, {}, args[1], args[2]);
++#ifdef EDEN_SHARED_JIT_LAYOUT
++    code.mov(code.ABI_PARAM1, code.ABI_JIT_PTR);
++    code.CallLambda([](A64JitState& state, A64::VAddr address, u32 operand) -> u32 {
++        const auto* config = static_cast<const A64::UserConfig*>(state.eden_conf);
++        auto* callbacks = static_cast<A64::UserCallbacks*>(state.eden_callbacks);
++        if (!config || !callbacks || !state.eden_jit) {
++            std::fputs("CPU_TRACE ldclr16orders_runtime_context_missing action=abort_no_fake_success\n", stderr);
++            std::abort();
++        }
++        const auto observed = AtomicFetchClear16Checked(*callbacks, config->global_monitor, address, operand);
++        if (!observed) {
++            Atomic::Or(&state.halt_reason, static_cast<u32>(HaltReason::MemoryAbort));
++            return 0; // Fault placeholder is never written back architecturally.
++        }
++        return *observed;
++    });
++#else
++    code.mov(code.ABI_PARAM1, reinterpret_cast<u64>(this));
++    code.CallLambda([](A64EmitX64& emitter, A64::VAddr address, u32 operand) -> u32 {
++        const auto observed = AtomicFetchClear16Checked(*emitter.conf.callbacks,
++            emitter.conf.global_monitor, address, operand);
++        if (!observed) {
++            emitter.jit_interface->HaltExecution(HaltReason::MemoryAbort);
++            return 0;
++        }
++        return *observed;
++    });
++#endif
++    EmitCheckMemoryAbort(ctx, inst);
++}
++
++// Narrow typed checked CAS loop; arithmetic truncates only the memory operand.
++static std::optional<u32> AtomicFetchAdd16Checked(A64::UserCallbacks& callbacks,
++        ExclusiveMonitor* monitor, A64::VAddr address, u32 operand) {
++    u16 expected = 0;
++    for (;;) {
++        const u16 desired = static_cast<u16>(expected + operand);
++        const auto observed = callbacks.MemoryAtomicCompareExchange16(address, expected, desired, monitor);
++        if (!observed || *observed == expected) return observed;
++        expected = *observed;
++    }
++}
++
++void A64EmitX64::EmitA64AtomicFetchAdd16(A64EmitContext& ctx, IR::Inst* inst) {
++    auto args = ctx.reg_alloc.GetArgumentInfo(inst);
++    ctx.reg_alloc.HostCall(code, inst, {}, args[1], args[2]);
++#ifdef EDEN_SHARED_JIT_LAYOUT
++    code.mov(code.ABI_PARAM1, code.ABI_JIT_PTR);
++    code.CallLambda([](A64JitState& state, A64::VAddr address, u32 operand) -> u32 {
++        const auto* config = static_cast<const A64::UserConfig*>(state.eden_conf);
++        auto* callbacks = static_cast<A64::UserCallbacks*>(state.eden_callbacks);
++        if (!config || !callbacks || !state.eden_jit) {
++            std::fputs("CPU_TRACE ldadd16orders_runtime_context_missing action=abort_no_fake_success\n", stderr);
++            std::abort();
++        }
++        const auto observed = AtomicFetchAdd16Checked(*callbacks, config->global_monitor, address, operand);
++        if (!observed) {
++            Atomic::Or(&state.halt_reason, static_cast<u32>(HaltReason::MemoryAbort));
++            return 0; // Fault placeholder is never written back architecturally.
++        }
++        return *observed;
++    });
++#else
++    code.mov(code.ABI_PARAM1, reinterpret_cast<u64>(this));
++    code.CallLambda([](A64EmitX64& emitter, A64::VAddr address, u32 operand) -> u32 {
++        const auto observed = AtomicFetchAdd16Checked(*emitter.conf.callbacks,
++            emitter.conf.global_monitor, address, operand);
++        if (!observed) {
++            emitter.jit_interface->HaltExecution(HaltReason::MemoryAbort);
++            return 0;
++        }
++        return *observed;
++    });
++#endif
++    EmitCheckMemoryAbort(ctx, inst);
++}
++
++// Narrow typed checked CAS loop; arithmetic truncates only the memory operand.
++static std::optional<u32> AtomicExchange8Checked(A64::UserCallbacks& callbacks,
++        ExclusiveMonitor* monitor, A64::VAddr address, u32 operand) {
++    u8 expected = 0;
++    for (;;) {
++        const u8 desired = static_cast<u8>(operand);
++        const auto observed = callbacks.MemoryAtomicCompareExchange8(address, expected, desired, monitor);
++        if (!observed || *observed == expected) return observed;
++        expected = *observed;
++    }
++}
++
++void A64EmitX64::EmitA64AtomicExchange8(A64EmitContext& ctx, IR::Inst* inst) {
++    auto args = ctx.reg_alloc.GetArgumentInfo(inst);
++    ctx.reg_alloc.HostCall(code, inst, {}, args[1], args[2]);
++#ifdef EDEN_SHARED_JIT_LAYOUT
++    code.mov(code.ABI_PARAM1, code.ABI_JIT_PTR);
++    code.CallLambda([](A64JitState& state, A64::VAddr address, u32 operand) -> u32 {
++        const auto* config = static_cast<const A64::UserConfig*>(state.eden_conf);
++        auto* callbacks = static_cast<A64::UserCallbacks*>(state.eden_callbacks);
++        if (!config || !callbacks || !state.eden_jit) {
++            std::fputs("CPU_TRACE swp8orders_runtime_context_missing action=abort_no_fake_success\n", stderr);
++            std::abort();
++        }
++        const auto observed = AtomicExchange8Checked(*callbacks, config->global_monitor, address, operand);
++        if (!observed) {
++            Atomic::Or(&state.halt_reason, static_cast<u32>(HaltReason::MemoryAbort));
++            return 0; // Fault placeholder is never written back architecturally.
++        }
++        return *observed;
++    });
++#else
++    code.mov(code.ABI_PARAM1, reinterpret_cast<u64>(this));
++    code.CallLambda([](A64EmitX64& emitter, A64::VAddr address, u32 operand) -> u32 {
++        const auto observed = AtomicExchange8Checked(*emitter.conf.callbacks,
++            emitter.conf.global_monitor, address, operand);
++        if (!observed) {
++            emitter.jit_interface->HaltExecution(HaltReason::MemoryAbort);
++            return 0;
++        }
++        return *observed;
++    });
++#endif
++    EmitCheckMemoryAbort(ctx, inst);
++}
++
++// Narrow typed checked CAS loop; arithmetic truncates only the memory operand.
++static std::optional<u32> AtomicFetchXor8Checked(A64::UserCallbacks& callbacks,
++        ExclusiveMonitor* monitor, A64::VAddr address, u32 operand) {
++    u8 expected = 0;
++    for (;;) {
++        const u8 desired = static_cast<u8>(expected ^ operand);
++        const auto observed = callbacks.MemoryAtomicCompareExchange8(address, expected, desired, monitor);
++        if (!observed || *observed == expected) return observed;
++        expected = *observed;
++    }
++}
++
++void A64EmitX64::EmitA64AtomicFetchXor8(A64EmitContext& ctx, IR::Inst* inst) {
++    auto args = ctx.reg_alloc.GetArgumentInfo(inst);
++    ctx.reg_alloc.HostCall(code, inst, {}, args[1], args[2]);
++#ifdef EDEN_SHARED_JIT_LAYOUT
++    code.mov(code.ABI_PARAM1, code.ABI_JIT_PTR);
++    code.CallLambda([](A64JitState& state, A64::VAddr address, u32 operand) -> u32 {
++        const auto* config = static_cast<const A64::UserConfig*>(state.eden_conf);
++        auto* callbacks = static_cast<A64::UserCallbacks*>(state.eden_callbacks);
++        if (!config || !callbacks || !state.eden_jit) {
++            std::fputs("CPU_TRACE ldeor8orders_runtime_context_missing action=abort_no_fake_success\n", stderr);
++            std::abort();
++        }
++        const auto observed = AtomicFetchXor8Checked(*callbacks, config->global_monitor, address, operand);
++        if (!observed) {
++            Atomic::Or(&state.halt_reason, static_cast<u32>(HaltReason::MemoryAbort));
++            return 0; // Fault placeholder is never written back architecturally.
++        }
++        return *observed;
++    });
++#else
++    code.mov(code.ABI_PARAM1, reinterpret_cast<u64>(this));
++    code.CallLambda([](A64EmitX64& emitter, A64::VAddr address, u32 operand) -> u32 {
++        const auto observed = AtomicFetchXor8Checked(*emitter.conf.callbacks,
++            emitter.conf.global_monitor, address, operand);
++        if (!observed) {
++            emitter.jit_interface->HaltExecution(HaltReason::MemoryAbort);
++            return 0;
++        }
++        return *observed;
++    });
++#endif
++    EmitCheckMemoryAbort(ctx, inst);
++}
++
++// Narrow typed checked CAS loop; arithmetic truncates only the memory operand.
++static std::optional<u32> AtomicFetchOr8Checked(A64::UserCallbacks& callbacks,
++        ExclusiveMonitor* monitor, A64::VAddr address, u32 operand) {
++    u8 expected = 0;
++    for (;;) {
++        const u8 desired = static_cast<u8>(expected | operand);
++        const auto observed = callbacks.MemoryAtomicCompareExchange8(address, expected, desired, monitor);
++        if (!observed || *observed == expected) return observed;
++        expected = *observed;
++    }
++}
++
++void A64EmitX64::EmitA64AtomicFetchOr8(A64EmitContext& ctx, IR::Inst* inst) {
++    auto args = ctx.reg_alloc.GetArgumentInfo(inst);
++    ctx.reg_alloc.HostCall(code, inst, {}, args[1], args[2]);
++#ifdef EDEN_SHARED_JIT_LAYOUT
++    code.mov(code.ABI_PARAM1, code.ABI_JIT_PTR);
++    code.CallLambda([](A64JitState& state, A64::VAddr address, u32 operand) -> u32 {
++        const auto* config = static_cast<const A64::UserConfig*>(state.eden_conf);
++        auto* callbacks = static_cast<A64::UserCallbacks*>(state.eden_callbacks);
++        if (!config || !callbacks || !state.eden_jit) {
++            std::fputs("CPU_TRACE ldset8orders_runtime_context_missing action=abort_no_fake_success\n", stderr);
++            std::abort();
++        }
++        const auto observed = AtomicFetchOr8Checked(*callbacks, config->global_monitor, address, operand);
++        if (!observed) {
++            Atomic::Or(&state.halt_reason, static_cast<u32>(HaltReason::MemoryAbort));
++            return 0; // Fault placeholder is never written back architecturally.
++        }
++        return *observed;
++    });
++#else
++    code.mov(code.ABI_PARAM1, reinterpret_cast<u64>(this));
++    code.CallLambda([](A64EmitX64& emitter, A64::VAddr address, u32 operand) -> u32 {
++        const auto observed = AtomicFetchOr8Checked(*emitter.conf.callbacks,
++            emitter.conf.global_monitor, address, operand);
++        if (!observed) {
++            emitter.jit_interface->HaltExecution(HaltReason::MemoryAbort);
++            return 0;
++        }
++        return *observed;
++    });
++#endif
++    EmitCheckMemoryAbort(ctx, inst);
++}
++
++// Narrow typed checked CAS loop; arithmetic truncates only the memory operand.
++static std::optional<u32> AtomicFetchClear8Checked(A64::UserCallbacks& callbacks,
++        ExclusiveMonitor* monitor, A64::VAddr address, u32 operand) {
++    u8 expected = 0;
++    for (;;) {
++        const u8 desired = static_cast<u8>(expected & ~operand);
++        const auto observed = callbacks.MemoryAtomicCompareExchange8(address, expected, desired, monitor);
++        if (!observed || *observed == expected) return observed;
++        expected = *observed;
++    }
++}
++
++void A64EmitX64::EmitA64AtomicFetchClear8(A64EmitContext& ctx, IR::Inst* inst) {
++    auto args = ctx.reg_alloc.GetArgumentInfo(inst);
++    ctx.reg_alloc.HostCall(code, inst, {}, args[1], args[2]);
++#ifdef EDEN_SHARED_JIT_LAYOUT
++    code.mov(code.ABI_PARAM1, code.ABI_JIT_PTR);
++    code.CallLambda([](A64JitState& state, A64::VAddr address, u32 operand) -> u32 {
++        const auto* config = static_cast<const A64::UserConfig*>(state.eden_conf);
++        auto* callbacks = static_cast<A64::UserCallbacks*>(state.eden_callbacks);
++        if (!config || !callbacks || !state.eden_jit) {
++            std::fputs("CPU_TRACE ldclr8orders_runtime_context_missing action=abort_no_fake_success\n", stderr);
++            std::abort();
++        }
++        const auto observed = AtomicFetchClear8Checked(*callbacks, config->global_monitor, address, operand);
++        if (!observed) {
++            Atomic::Or(&state.halt_reason, static_cast<u32>(HaltReason::MemoryAbort));
++            return 0; // Fault placeholder is never written back architecturally.
++        }
++        return *observed;
++    });
++#else
++    code.mov(code.ABI_PARAM1, reinterpret_cast<u64>(this));
++    code.CallLambda([](A64EmitX64& emitter, A64::VAddr address, u32 operand) -> u32 {
++        const auto observed = AtomicFetchClear8Checked(*emitter.conf.callbacks,
++            emitter.conf.global_monitor, address, operand);
++        if (!observed) {
++            emitter.jit_interface->HaltExecution(HaltReason::MemoryAbort);
++            return 0;
++        }
++        return *observed;
++    });
++#endif
++    EmitCheckMemoryAbort(ctx, inst);
++}
++
++// Narrow typed checked CAS loop; arithmetic truncates only the memory operand.
++static std::optional<u32> AtomicFetchAdd8Checked(A64::UserCallbacks& callbacks,
++        ExclusiveMonitor* monitor, A64::VAddr address, u32 operand) {
++    u8 expected = 0;
++    for (;;) {
++        const u8 desired = static_cast<u8>(expected + operand);
++        const auto observed = callbacks.MemoryAtomicCompareExchange8(address, expected, desired, monitor);
++        if (!observed || *observed == expected) return observed;
++        expected = *observed;
++    }
++}
++
++void A64EmitX64::EmitA64AtomicFetchAdd8(A64EmitContext& ctx, IR::Inst* inst) {
++    auto args = ctx.reg_alloc.GetArgumentInfo(inst);
++    ctx.reg_alloc.HostCall(code, inst, {}, args[1], args[2]);
++#ifdef EDEN_SHARED_JIT_LAYOUT
++    code.mov(code.ABI_PARAM1, code.ABI_JIT_PTR);
++    code.CallLambda([](A64JitState& state, A64::VAddr address, u32 operand) -> u32 {
++        const auto* config = static_cast<const A64::UserConfig*>(state.eden_conf);
++        auto* callbacks = static_cast<A64::UserCallbacks*>(state.eden_callbacks);
++        if (!config || !callbacks || !state.eden_jit) {
++            std::fputs("CPU_TRACE ldadd8orders_runtime_context_missing action=abort_no_fake_success\n", stderr);
++            std::abort();
++        }
++        const auto observed = AtomicFetchAdd8Checked(*callbacks, config->global_monitor, address, operand);
++        if (!observed) {
++            Atomic::Or(&state.halt_reason, static_cast<u32>(HaltReason::MemoryAbort));
++            return 0; // Fault placeholder is never written back architecturally.
++        }
++        return *observed;
++    });
++#else
++    code.mov(code.ABI_PARAM1, reinterpret_cast<u64>(this));
++    code.CallLambda([](A64EmitX64& emitter, A64::VAddr address, u32 operand) -> u32 {
++        const auto observed = AtomicFetchAdd8Checked(*emitter.conf.callbacks,
++            emitter.conf.global_monitor, address, operand);
++        if (!observed) {
++            emitter.jit_interface->HaltExecution(HaltReason::MemoryAbort);
++            return 0;
++        }
++        return *observed;
++    });
++#endif
++    EmitCheckMemoryAbort(ctx, inst);
++}
++
++// Checked real CAS loop, old-value result, conservative full barriers.
++static std::optional<u32> AtomicExchange32Checked(A64::UserCallbacks& callbacks,
++        ExclusiveMonitor* monitor, A64::VAddr address, u32 operand) {
++    u32 expected = 0;
++    for (;;) {
++        const u32 desired = static_cast<u32>(operand);
++        const auto observed = callbacks.MemoryAtomicCompareExchange32(address, expected, desired, monitor);
++        if (!observed || *observed == expected) return observed;
++        expected = *observed;
++    }
++}
++
++void A64EmitX64::EmitA64AtomicExchange32(A64EmitContext& ctx, IR::Inst* inst) {
++    auto args = ctx.reg_alloc.GetArgumentInfo(inst);
++    ctx.reg_alloc.HostCall(code, inst, {}, args[1], args[2]);
++#ifdef EDEN_SHARED_JIT_LAYOUT
++    code.mov(code.ABI_PARAM1, code.ABI_JIT_PTR);
++    code.CallLambda([](A64JitState& state, A64::VAddr address, u32 operand) -> u32 {
++        const auto* config = static_cast<const A64::UserConfig*>(state.eden_conf);
++        auto* callbacks = static_cast<A64::UserCallbacks*>(state.eden_callbacks);
++        if (!config || !callbacks || !state.eden_jit) {
++            std::fputs("CPU_TRACE swp32orders_runtime_context_missing action=abort_no_fake_success\n", stderr);
++            std::abort();
++        }
++        const auto observed = AtomicExchange32Checked(*callbacks, config->global_monitor, address, operand);
++        if (!observed) {
++            Atomic::Or(&state.halt_reason, static_cast<u32>(HaltReason::MemoryAbort));
++            return 0; // Fault placeholder is never written back architecturally.
++        }
++        return *observed;
++    });
++#else
++    code.mov(code.ABI_PARAM1, reinterpret_cast<u64>(this));
++    code.CallLambda([](A64EmitX64& emitter, A64::VAddr address, u32 operand) -> u32 {
++        const auto observed = AtomicExchange32Checked(*emitter.conf.callbacks,
++            emitter.conf.global_monitor, address, operand);
++        if (!observed) {
++            emitter.jit_interface->HaltExecution(HaltReason::MemoryAbort);
++            return 0;
++        }
++        return *observed;
++    });
++#endif
++    EmitCheckMemoryAbort(ctx, inst);
++}
++
++// Checked real CAS loop, old-value result, conservative full barriers.
++static std::optional<u32> AtomicFetchXor32Checked(A64::UserCallbacks& callbacks,
++        ExclusiveMonitor* monitor, A64::VAddr address, u32 operand) {
++    u32 expected = 0;
++    for (;;) {
++        const u32 desired = static_cast<u32>(expected ^ operand);
++        const auto observed = callbacks.MemoryAtomicCompareExchange32(address, expected, desired, monitor);
++        if (!observed || *observed == expected) return observed;
++        expected = *observed;
++    }
++}
++
++void A64EmitX64::EmitA64AtomicFetchXor32(A64EmitContext& ctx, IR::Inst* inst) {
++    auto args = ctx.reg_alloc.GetArgumentInfo(inst);
++    ctx.reg_alloc.HostCall(code, inst, {}, args[1], args[2]);
++#ifdef EDEN_SHARED_JIT_LAYOUT
++    code.mov(code.ABI_PARAM1, code.ABI_JIT_PTR);
++    code.CallLambda([](A64JitState& state, A64::VAddr address, u32 operand) -> u32 {
++        const auto* config = static_cast<const A64::UserConfig*>(state.eden_conf);
++        auto* callbacks = static_cast<A64::UserCallbacks*>(state.eden_callbacks);
++        if (!config || !callbacks || !state.eden_jit) {
++            std::fputs("CPU_TRACE ldeor32orders_runtime_context_missing action=abort_no_fake_success\n", stderr);
++            std::abort();
++        }
++        const auto observed = AtomicFetchXor32Checked(*callbacks, config->global_monitor, address, operand);
++        if (!observed) {
++            Atomic::Or(&state.halt_reason, static_cast<u32>(HaltReason::MemoryAbort));
++            return 0; // Fault placeholder is never written back architecturally.
++        }
++        return *observed;
++    });
++#else
++    code.mov(code.ABI_PARAM1, reinterpret_cast<u64>(this));
++    code.CallLambda([](A64EmitX64& emitter, A64::VAddr address, u32 operand) -> u32 {
++        const auto observed = AtomicFetchXor32Checked(*emitter.conf.callbacks,
++            emitter.conf.global_monitor, address, operand);
++        if (!observed) {
++            emitter.jit_interface->HaltExecution(HaltReason::MemoryAbort);
++            return 0;
++        }
++        return *observed;
++    });
++#endif
++    EmitCheckMemoryAbort(ctx, inst);
++}
++
++// Full-width fetch-add, linearized solely by the checked real CAS64 callback.
++static std::optional<u64> AtomicFetchAdd64Checked(A64::UserCallbacks& callbacks,
++        ExclusiveMonitor* monitor, A64::VAddr address, u64 operand) {
++    u64 expected = 0;
++    for (;;) {
++        const u64 desired = static_cast<u64>(expected + operand);
++        const auto observed = callbacks.MemoryAtomicCompareExchange64(address, expected, desired, monitor);
++        if (!observed || *observed == expected) return observed;
++        expected = *observed;
++    }
++}
++
++void A64EmitX64::EmitA64AtomicFetchAdd64(A64EmitContext& ctx, IR::Inst* inst) {
++    auto args = ctx.reg_alloc.GetArgumentInfo(inst);
++    ctx.reg_alloc.HostCall(code, inst, {}, args[1], args[2]);
++#ifdef EDEN_SHARED_JIT_LAYOUT
++    code.mov(code.ABI_PARAM1, code.ABI_JIT_PTR);
++    code.CallLambda([](A64JitState& state, A64::VAddr address, u64 operand) -> u64 {
++        const auto* config = static_cast<const A64::UserConfig*>(state.eden_conf);
++        auto* callbacks = static_cast<A64::UserCallbacks*>(state.eden_callbacks);
++        if (!config || !callbacks || !state.eden_jit) {
++            std::fputs("CPU_TRACE ldadd64_runtime_context_missing action=abort_no_fake_success\n", stderr);
++            std::abort();
++        }
++        const auto observed = AtomicFetchAdd64Checked(*callbacks, config->global_monitor, address, operand);
++        if (!observed) {
++            Atomic::Or(&state.halt_reason, static_cast<u32>(HaltReason::MemoryAbort));
++            return 0; // Fault placeholder is never written back architecturally.
++        }
++        return *observed;
++    });
++#else
++    code.mov(code.ABI_PARAM1, reinterpret_cast<u64>(this));
++    code.CallLambda([](A64EmitX64& emitter, A64::VAddr address, u64 operand) -> u64 {
++        const auto observed = AtomicFetchAdd64Checked(*emitter.conf.callbacks,
++            emitter.conf.global_monitor, address, operand);
++        if (!observed) {
++            emitter.jit_interface->HaltExecution(HaltReason::MemoryAbort);
++            return 0;
++        }
++        return *observed;
++    });
++#endif
++    EmitCheckMemoryAbort(ctx, inst);
++}
++
++// Checked real CAS loop, old-value result, conservative full barriers.
++static std::optional<u64> AtomicExchange64Checked(A64::UserCallbacks& callbacks,
++        ExclusiveMonitor* monitor, A64::VAddr address, u64 operand) {
++    u64 expected = 0;
++    for (;;) {
++        const u64 desired = static_cast<u64>(operand);
++        const auto observed = callbacks.MemoryAtomicCompareExchange64(address, expected, desired, monitor);
++        if (!observed || *observed == expected) return observed;
++        expected = *observed;
++    }
++}
++
++void A64EmitX64::EmitA64AtomicExchange64(A64EmitContext& ctx, IR::Inst* inst) {
++    auto args = ctx.reg_alloc.GetArgumentInfo(inst);
++    ctx.reg_alloc.HostCall(code, inst, {}, args[1], args[2]);
++#ifdef EDEN_SHARED_JIT_LAYOUT
++    code.mov(code.ABI_PARAM1, code.ABI_JIT_PTR);
++    code.CallLambda([](A64JitState& state, A64::VAddr address, u64 operand) -> u64 {
++        const auto* config = static_cast<const A64::UserConfig*>(state.eden_conf);
++        auto* callbacks = static_cast<A64::UserCallbacks*>(state.eden_callbacks);
++        if (!config || !callbacks || !state.eden_jit) {
++            std::fputs("CPU_TRACE swp64orders_runtime_context_missing action=abort_no_fake_success\n", stderr);
++            std::abort();
++        }
++        const auto observed = AtomicExchange64Checked(*callbacks, config->global_monitor, address, operand);
++        if (!observed) {
++            Atomic::Or(&state.halt_reason, static_cast<u32>(HaltReason::MemoryAbort));
++            return 0; // Fault placeholder is never written back architecturally.
++        }
++        return *observed;
++    });
++#else
++    code.mov(code.ABI_PARAM1, reinterpret_cast<u64>(this));
++    code.CallLambda([](A64EmitX64& emitter, A64::VAddr address, u64 operand) -> u64 {
++        const auto observed = AtomicExchange64Checked(*emitter.conf.callbacks,
++            emitter.conf.global_monitor, address, operand);
++        if (!observed) {
++            emitter.jit_interface->HaltExecution(HaltReason::MemoryAbort);
++            return 0;
++        }
++        return *observed;
++    });
++#endif
++    EmitCheckMemoryAbort(ctx, inst);
++}
++
++// Checked real CAS loop, old-value result, conservative full barriers.
++static std::optional<u64> AtomicFetchXor64Checked(A64::UserCallbacks& callbacks,
++        ExclusiveMonitor* monitor, A64::VAddr address, u64 operand) {
++    u64 expected = 0;
++    for (;;) {
++        const u64 desired = static_cast<u64>(expected ^ operand);
++        const auto observed = callbacks.MemoryAtomicCompareExchange64(address, expected, desired, monitor);
++        if (!observed || *observed == expected) return observed;
++        expected = *observed;
++    }
++}
++
++void A64EmitX64::EmitA64AtomicFetchXor64(A64EmitContext& ctx, IR::Inst* inst) {
++    auto args = ctx.reg_alloc.GetArgumentInfo(inst);
++    ctx.reg_alloc.HostCall(code, inst, {}, args[1], args[2]);
++#ifdef EDEN_SHARED_JIT_LAYOUT
++    code.mov(code.ABI_PARAM1, code.ABI_JIT_PTR);
++    code.CallLambda([](A64JitState& state, A64::VAddr address, u64 operand) -> u64 {
++        const auto* config = static_cast<const A64::UserConfig*>(state.eden_conf);
++        auto* callbacks = static_cast<A64::UserCallbacks*>(state.eden_callbacks);
++        if (!config || !callbacks || !state.eden_jit) {
++            std::fputs("CPU_TRACE ldeor64orders_runtime_context_missing action=abort_no_fake_success\n", stderr);
++            std::abort();
++        }
++        const auto observed = AtomicFetchXor64Checked(*callbacks, config->global_monitor, address, operand);
++        if (!observed) {
++            Atomic::Or(&state.halt_reason, static_cast<u32>(HaltReason::MemoryAbort));
++            return 0; // Fault placeholder is never written back architecturally.
++        }
++        return *observed;
++    });
++#else
++    code.mov(code.ABI_PARAM1, reinterpret_cast<u64>(this));
++    code.CallLambda([](A64EmitX64& emitter, A64::VAddr address, u64 operand) -> u64 {
++        const auto observed = AtomicFetchXor64Checked(*emitter.conf.callbacks,
++            emitter.conf.global_monitor, address, operand);
++        if (!observed) {
++            emitter.jit_interface->HaltExecution(HaltReason::MemoryAbort);
++            return 0;
++        }
++        return *observed;
++    });
++#endif
++    EmitCheckMemoryAbort(ctx, inst);
++}
++
++// Checked real CAS loop, old-value result, conservative full barriers.
++static std::optional<u64> AtomicFetchClear64Checked(A64::UserCallbacks& callbacks,
++        ExclusiveMonitor* monitor, A64::VAddr address, u64 operand) {
++    u64 expected = 0;
++    for (;;) {
++        const u64 desired = static_cast<u64>(expected & ~operand);
++        const auto observed = callbacks.MemoryAtomicCompareExchange64(address, expected, desired, monitor);
++        if (!observed || *observed == expected) return observed;
++        expected = *observed;
++    }
++}
++
++void A64EmitX64::EmitA64AtomicFetchClear64(A64EmitContext& ctx, IR::Inst* inst) {
++    auto args = ctx.reg_alloc.GetArgumentInfo(inst);
++    ctx.reg_alloc.HostCall(code, inst, {}, args[1], args[2]);
++#ifdef EDEN_SHARED_JIT_LAYOUT
++    code.mov(code.ABI_PARAM1, code.ABI_JIT_PTR);
++    code.CallLambda([](A64JitState& state, A64::VAddr address, u64 operand) -> u64 {
++        const auto* config = static_cast<const A64::UserConfig*>(state.eden_conf);
++        auto* callbacks = static_cast<A64::UserCallbacks*>(state.eden_callbacks);
++        if (!config || !callbacks || !state.eden_jit) {
++            std::fputs("CPU_TRACE ldclr64orders_runtime_context_missing action=abort_no_fake_success\n", stderr);
++            std::abort();
++        }
++        const auto observed = AtomicFetchClear64Checked(*callbacks, config->global_monitor, address, operand);
++        if (!observed) {
++            Atomic::Or(&state.halt_reason, static_cast<u32>(HaltReason::MemoryAbort));
++            return 0; // Fault placeholder is never written back architecturally.
++        }
++        return *observed;
++    });
++#else
++    code.mov(code.ABI_PARAM1, reinterpret_cast<u64>(this));
++    code.CallLambda([](A64EmitX64& emitter, A64::VAddr address, u64 operand) -> u64 {
++        const auto observed = AtomicFetchClear64Checked(*emitter.conf.callbacks,
++            emitter.conf.global_monitor, address, operand);
++        if (!observed) {
++            emitter.jit_interface->HaltExecution(HaltReason::MemoryAbort);
++            return 0;
++        }
++        return *observed;
++    });
++#endif
++    EmitCheckMemoryAbort(ctx, inst);
++}
++
++// Checked real CAS loop, old-value result, conservative full barriers.
++static std::optional<u64> AtomicFetchOr64Checked(A64::UserCallbacks& callbacks,
++        ExclusiveMonitor* monitor, A64::VAddr address, u64 operand) {
++    u64 expected = 0;
++    for (;;) {
++        const u64 desired = static_cast<u64>(expected | operand);
++        const auto observed = callbacks.MemoryAtomicCompareExchange64(address, expected, desired, monitor);
++        if (!observed || *observed == expected) return observed;
++        expected = *observed;
++    }
++}
++
++void A64EmitX64::EmitA64AtomicFetchOr64(A64EmitContext& ctx, IR::Inst* inst) {
++    auto args = ctx.reg_alloc.GetArgumentInfo(inst);
++    ctx.reg_alloc.HostCall(code, inst, {}, args[1], args[2]);
++#ifdef EDEN_SHARED_JIT_LAYOUT
++    code.mov(code.ABI_PARAM1, code.ABI_JIT_PTR);
++    code.CallLambda([](A64JitState& state, A64::VAddr address, u64 operand) -> u64 {
++        const auto* config = static_cast<const A64::UserConfig*>(state.eden_conf);
++        auto* callbacks = static_cast<A64::UserCallbacks*>(state.eden_callbacks);
++        if (!config || !callbacks || !state.eden_jit) {
++            std::fputs("CPU_TRACE ldset64orders_runtime_context_missing action=abort_no_fake_success\n", stderr);
++            std::abort();
++        }
++        const auto observed = AtomicFetchOr64Checked(*callbacks, config->global_monitor, address, operand);
++        if (!observed) {
++            Atomic::Or(&state.halt_reason, static_cast<u32>(HaltReason::MemoryAbort));
++            return 0; // Fault placeholder is never written back architecturally.
++        }
++        return *observed;
++    });
++#else
++    code.mov(code.ABI_PARAM1, reinterpret_cast<u64>(this));
++    code.CallLambda([](A64EmitX64& emitter, A64::VAddr address, u64 operand) -> u64 {
++        const auto observed = AtomicFetchOr64Checked(*emitter.conf.callbacks,
++            emitter.conf.global_monitor, address, operand);
++        if (!observed) {
++            emitter.jit_interface->HaltExecution(HaltReason::MemoryAbort);
++            return 0;
++        }
++        return *observed;
++    });
++#endif
++    EmitCheckMemoryAbort(ctx, inst);
++}
++
++// Same checked VM/monitor/CAS path; OR replaces arithmetic addition.
++static std::optional<u32> AtomicFetchOr32Checked(A64::UserCallbacks& callbacks,
++        ExclusiveMonitor* monitor, A64::VAddr address, u32 operand) {
++    u32 expected = 0;
++    for (;;) {
++        const u32 desired = static_cast<u32>(expected | operand);
++        const auto observed = callbacks.MemoryAtomicCompareExchange32(address, expected, desired, monitor);
++        if (!observed || *observed == expected) return observed;
++        expected = *observed;
++    }
++}
++
++void A64EmitX64::EmitA64AtomicFetchOr32(A64EmitContext& ctx, IR::Inst* inst) {
++    auto args = ctx.reg_alloc.GetArgumentInfo(inst);
++    ctx.reg_alloc.HostCall(code, inst, {}, args[1], args[2]);
++#ifdef EDEN_SHARED_JIT_LAYOUT
++    code.mov(code.ABI_PARAM1, code.ABI_JIT_PTR);
++    code.CallLambda([](A64JitState& state, A64::VAddr address, u32 operand) -> u32 {
++        const auto* config = static_cast<const A64::UserConfig*>(state.eden_conf);
++        auto* callbacks = static_cast<A64::UserCallbacks*>(state.eden_callbacks);
++        if (!config || !callbacks || !state.eden_jit) {
++            std::fputs("CPU_TRACE ldset32_runtime_context_missing action=abort_no_fake_success\n", stderr);
++            std::abort();
++        }
++        const auto observed = AtomicFetchOr32Checked(*callbacks, config->global_monitor, address, operand);
++        if (!observed) {
++            Atomic::Or(&state.halt_reason, static_cast<u32>(HaltReason::MemoryAbort));
++            return 0; // Fault placeholder is never written back architecturally.
++        }
++        return *observed;
++    });
++#else
++    code.mov(code.ABI_PARAM1, reinterpret_cast<u64>(this));
++    code.CallLambda([](A64EmitX64& emitter, A64::VAddr address, u32 operand) -> u32 {
++        const auto observed = AtomicFetchOr32Checked(*emitter.conf.callbacks,
++            emitter.conf.global_monitor, address, operand);
++        if (!observed) {
++            emitter.jit_interface->HaltExecution(HaltReason::MemoryAbort);
++            return 0;
++        }
++        return *observed;
++    });
++#endif
++    EmitCheckMemoryAbort(ctx, inst);
++}
++
++// Same checked VM/monitor/CAS path; AND-NOT replaces arithmetic addition.
++static std::optional<u32> AtomicFetchClear32Checked(A64::UserCallbacks& callbacks,
++        ExclusiveMonitor* monitor, A64::VAddr address, u32 operand) {
++    u32 expected = 0;
++    for (;;) {
++        const u32 desired = static_cast<u32>(expected & ~operand);
++        const auto observed = callbacks.MemoryAtomicCompareExchange32(address, expected, desired, monitor);
++        if (!observed || *observed == expected) return observed;
++        expected = *observed;
++    }
++}
++
++void A64EmitX64::EmitA64AtomicFetchClear32(A64EmitContext& ctx, IR::Inst* inst) {
++    auto args = ctx.reg_alloc.GetArgumentInfo(inst);
++    ctx.reg_alloc.HostCall(code, inst, {}, args[1], args[2]);
++#ifdef EDEN_SHARED_JIT_LAYOUT
++    code.mov(code.ABI_PARAM1, code.ABI_JIT_PTR);
++    code.CallLambda([](A64JitState& state, A64::VAddr address, u32 operand) -> u32 {
++        const auto* config = static_cast<const A64::UserConfig*>(state.eden_conf);
++        auto* callbacks = static_cast<A64::UserCallbacks*>(state.eden_callbacks);
++        if (!config || !callbacks || !state.eden_jit) {
++            std::fputs("CPU_TRACE ldclr32_runtime_context_missing action=abort_no_fake_success\n", stderr);
++            std::abort();
++        }
++        const auto observed = AtomicFetchClear32Checked(*callbacks, config->global_monitor, address, operand);
++        if (!observed) {
++            Atomic::Or(&state.halt_reason, static_cast<u32>(HaltReason::MemoryAbort));
++            return 0; // Fault placeholder is never written back architecturally.
++        }
++        return *observed;
++    });
++#else
++    code.mov(code.ABI_PARAM1, reinterpret_cast<u64>(this));
++    code.CallLambda([](A64EmitX64& emitter, A64::VAddr address, u32 operand) -> u32 {
++        const auto observed = AtomicFetchClear32Checked(*emitter.conf.callbacks,
++            emitter.conf.global_monitor, address, operand);
++        if (!observed) {
++            emitter.jit_interface->HaltExecution(HaltReason::MemoryAbort);
++            return 0;
++        }
++        return *observed;
++    });
++#endif
++    EmitCheckMemoryAbort(ctx, inst);
++}
++
++// Same checked VM/monitor/CAS path; OR replaces arithmetic addition.
+ void A64EmitX64::EmitA64ClearExclusive(A64EmitContext&, IR::Inst*) {
+     code.mov(code.byte[code.ABI_JIT_PTR + offsetof(A64JitState, exclusive_state)], u8(0));
+ }
+@@ -410,7 +1506,30 @@
+ }
+ 
+ void A64EmitX64::EmitCheckMemoryAbort(A64EmitContext&, IR::Inst* inst, Xbyak::Label* end) {
+-    if (!conf.check_halt_on_memory_access) {
++    if (!conf.check_halt_on_memory_access && inst->GetOpcode() != IR::Opcode::A64AtomicCompareExchange32 &&
++        inst->GetOpcode() != IR::Opcode::A64AtomicCompareExchange16 &&
++        inst->GetOpcode() != IR::Opcode::A64AtomicCompareExchange8 &&
++        inst->GetOpcode() != IR::Opcode::A64AtomicFetchAdd32 &&
++        inst->GetOpcode() != IR::Opcode::A64AtomicExchange16 &&
++        inst->GetOpcode() != IR::Opcode::A64AtomicFetchXor16 &&
++        inst->GetOpcode() != IR::Opcode::A64AtomicFetchOr16 &&
++        inst->GetOpcode() != IR::Opcode::A64AtomicFetchClear16 &&
++        inst->GetOpcode() != IR::Opcode::A64AtomicFetchAdd16 &&
++        inst->GetOpcode() != IR::Opcode::A64AtomicExchange8 &&
++        inst->GetOpcode() != IR::Opcode::A64AtomicFetchXor8 &&
++        inst->GetOpcode() != IR::Opcode::A64AtomicFetchOr8 &&
++        inst->GetOpcode() != IR::Opcode::A64AtomicFetchClear8 &&
++        inst->GetOpcode() != IR::Opcode::A64AtomicFetchAdd8 &&
++        inst->GetOpcode() != IR::Opcode::A64AtomicExchange32 &&
++        inst->GetOpcode() != IR::Opcode::A64AtomicFetchXor32 &&
++        inst->GetOpcode() != IR::Opcode::A64AtomicExchange64 &&
++        inst->GetOpcode() != IR::Opcode::A64AtomicFetchXor64 &&
++        inst->GetOpcode() != IR::Opcode::A64AtomicFetchClear64 &&
++        inst->GetOpcode() != IR::Opcode::A64AtomicFetchOr64 &&
++        inst->GetOpcode() != IR::Opcode::A64AtomicFetchAdd64 &&
++        inst->GetOpcode() != IR::Opcode::A64AtomicFetchClear32 &&
++        inst->GetOpcode() != IR::Opcode::A64AtomicFetchOr32 &&
++        inst->GetOpcode() != IR::Opcode::A64AtomicCompareExchange64) {
+         return;
+     }
+ 
+--- a/src/dynarmic/src/dynarmic/backend/x64/a64_interface.cpp
++++ b/src/dynarmic/src/dynarmic/backend/x64/a64_interface.cpp
+@@ -258,7 +258,7 @@
+         // LocationDescriptor ctor() does important ops (like tflags) do not skip
+         auto const arch_descriptor = A64::LocationDescriptor{descriptor};
+         ir_block.Reset(arch_descriptor);
+-        A64::Translate(ir_block, arch_descriptor, get_code, {conf.define_unpredictable_behaviour, conf.wall_clock_cntpct});
++        A64::Translate(ir_block, arch_descriptor, get_code, {conf.define_unpredictable_behaviour, conf.wall_clock_cntpct, true, conf.research_pauth_disabled_profile});
+         Optimization::Optimize(ir_block, conf, polyfill_options);
+         return emitter.Emit(ir_block).entrypoint;
+     }
+--- a/src/dynarmic/src/dynarmic/frontend/A64/a64_ir_emitter.h
++++ b/src/dynarmic/src/dynarmic/frontend/A64/a64_ir_emitter.h
+@@ -125,6 +125,130 @@
+         Inst(Opcode::A64ClearExclusive);
+     }
+ 
++    IR::U32 AtomicCompareExchange32(const IR::U64& address, const IR::U32& expected,
++                                    const IR::U32& desired) noexcept {
++        return Inst<IR::U32>(Opcode::A64AtomicCompareExchange32,
++                            ImmCurrentLocationDescriptor(), address, expected, desired);
++    }
++
++    IR::U32 AtomicCompareExchange16(const IR::U64& address, const IR::U32& expected,
++                                    const IR::U32& desired) noexcept {
++        return Inst<IR::U32>(Opcode::A64AtomicCompareExchange16,
++                            ImmCurrentLocationDescriptor(), address, expected, desired);
++    }
++
++    IR::U32 AtomicCompareExchange8(const IR::U64& address, const IR::U32& expected,
++                                    const IR::U32& desired) noexcept {
++        return Inst<IR::U32>(Opcode::A64AtomicCompareExchange8,
++                            ImmCurrentLocationDescriptor(), address, expected, desired);
++    }
++
++    IR::U64 AtomicCompareExchange64(const IR::U64& address, const IR::U64& expected,
++                                    const IR::U64& desired) noexcept {
++        return Inst<IR::U64>(Opcode::A64AtomicCompareExchange64,
++                            ImmCurrentLocationDescriptor(), address, expected, desired);
++    }
++
++    IR::U32 AtomicFetchAdd32(const IR::U64& address, const IR::U32& operand) noexcept {
++        return Inst<IR::U32>(Opcode::A64AtomicFetchAdd32,
++                            ImmCurrentLocationDescriptor(), address, operand);
++    }
++
++    IR::U32 AtomicExchange16(const IR::U64& address, const IR::U32& operand) noexcept {
++        return Inst<IR::U32>(Opcode::A64AtomicExchange16,
++                            ImmCurrentLocationDescriptor(), address, operand);
++    }
++
++    IR::U32 AtomicFetchXor16(const IR::U64& address, const IR::U32& operand) noexcept {
++        return Inst<IR::U32>(Opcode::A64AtomicFetchXor16,
++                            ImmCurrentLocationDescriptor(), address, operand);
++    }
++
++    IR::U32 AtomicFetchOr16(const IR::U64& address, const IR::U32& operand) noexcept {
++        return Inst<IR::U32>(Opcode::A64AtomicFetchOr16,
++                            ImmCurrentLocationDescriptor(), address, operand);
++    }
++
++    IR::U32 AtomicFetchClear16(const IR::U64& address, const IR::U32& operand) noexcept {
++        return Inst<IR::U32>(Opcode::A64AtomicFetchClear16,
++                            ImmCurrentLocationDescriptor(), address, operand);
++    }
++
++    IR::U32 AtomicFetchAdd16(const IR::U64& address, const IR::U32& operand) noexcept {
++        return Inst<IR::U32>(Opcode::A64AtomicFetchAdd16,
++                            ImmCurrentLocationDescriptor(), address, operand);
++    }
++
++    IR::U32 AtomicExchange8(const IR::U64& address, const IR::U32& operand) noexcept {
++        return Inst<IR::U32>(Opcode::A64AtomicExchange8,
++                            ImmCurrentLocationDescriptor(), address, operand);
++    }
++
++    IR::U32 AtomicFetchXor8(const IR::U64& address, const IR::U32& operand) noexcept {
++        return Inst<IR::U32>(Opcode::A64AtomicFetchXor8,
++                            ImmCurrentLocationDescriptor(), address, operand);
++    }
++
++    IR::U32 AtomicFetchOr8(const IR::U64& address, const IR::U32& operand) noexcept {
++        return Inst<IR::U32>(Opcode::A64AtomicFetchOr8,
++                            ImmCurrentLocationDescriptor(), address, operand);
++    }
++
++    IR::U32 AtomicFetchClear8(const IR::U64& address, const IR::U32& operand) noexcept {
++        return Inst<IR::U32>(Opcode::A64AtomicFetchClear8,
++                            ImmCurrentLocationDescriptor(), address, operand);
++    }
++
++    IR::U32 AtomicFetchAdd8(const IR::U64& address, const IR::U32& operand) noexcept {
++        return Inst<IR::U32>(Opcode::A64AtomicFetchAdd8,
++                            ImmCurrentLocationDescriptor(), address, operand);
++    }
++
++    IR::U32 AtomicExchange32(const IR::U64& address, const IR::U32& operand) noexcept {
++        return Inst<IR::U32>(Opcode::A64AtomicExchange32,
++                            ImmCurrentLocationDescriptor(), address, operand);
++    }
++
++    IR::U32 AtomicFetchXor32(const IR::U64& address, const IR::U32& operand) noexcept {
++        return Inst<IR::U32>(Opcode::A64AtomicFetchXor32,
++                            ImmCurrentLocationDescriptor(), address, operand);
++    }
++
++    IR::U64 AtomicFetchAdd64(const IR::U64& address, const IR::U64& operand) noexcept {
++        return Inst<IR::U64>(Opcode::A64AtomicFetchAdd64,
++                            ImmCurrentLocationDescriptor(), address, operand);
++    }
++
++    IR::U64 AtomicExchange64(const IR::U64& address, const IR::U64& operand) noexcept {
++        return Inst<IR::U64>(Opcode::A64AtomicExchange64,
++                            ImmCurrentLocationDescriptor(), address, operand);
++    }
++
++    IR::U64 AtomicFetchXor64(const IR::U64& address, const IR::U64& operand) noexcept {
++        return Inst<IR::U64>(Opcode::A64AtomicFetchXor64,
++                            ImmCurrentLocationDescriptor(), address, operand);
++    }
++
++    IR::U64 AtomicFetchClear64(const IR::U64& address, const IR::U64& operand) noexcept {
++        return Inst<IR::U64>(Opcode::A64AtomicFetchClear64,
++                            ImmCurrentLocationDescriptor(), address, operand);
++    }
++
++    IR::U64 AtomicFetchOr64(const IR::U64& address, const IR::U64& operand) noexcept {
++        return Inst<IR::U64>(Opcode::A64AtomicFetchOr64,
++                            ImmCurrentLocationDescriptor(), address, operand);
++    }
++
++    IR::U32 AtomicFetchClear32(const IR::U64& address, const IR::U32& operand) noexcept {
++        return Inst<IR::U32>(Opcode::A64AtomicFetchClear32,
++                            ImmCurrentLocationDescriptor(), address, operand);
++    }
++
++    IR::U32 AtomicFetchOr32(const IR::U64& address, const IR::U32& operand) noexcept {
++        return Inst<IR::U32>(Opcode::A64AtomicFetchOr32,
++                            ImmCurrentLocationDescriptor(), address, operand);
++    }
++
+     IR::U8 ReadMemory8(const IR::U64& vaddr, IR::AccType acc_type) noexcept {
+         return Inst<IR::U8>(Opcode::A64ReadMemory8, ImmCurrentLocationDescriptor(), vaddr, IR::Value{acc_type});
+     }
+--- a/src/dynarmic/src/dynarmic/frontend/A64/decoder/a64.inc
++++ b/src/dynarmic/src/dynarmic/frontend/A64/decoder/a64.inc
+@@ -34,6 +34,8 @@
+ INST(BLR, "BLR", "1101011000111111000000nnnnn00000")
+ INST(BR, "BR", "1101011000011111000000nnnnn00000")
+ INST(RET, "RET", "1101011001011111000000nnnnn00000")
++INST(XPAC_1, "XPAC", "110110101100000101000D11111ddddd")
++INST(RETA, "RETAA, RETAB", "110101100101111100001M1111111111")
+ INST(HINT, "HINT", "11010101000000110010MMMMooo11111")
+ INST(SXTB_1, "SXTB (32-bit)", "0001001100000000000111nnnnnddddd")
+ INST(SXTB_2, "SXTB (64-bit)", "1001001101000000000111nnnnnddddd")
+@@ -98,12 +100,37 @@
+ INST(FNEG_1, "FNEG (vector)", "0Q10111011111000111110nnnnnddddd")
+ INST(FRINTI_1, "FRINTI (vector)", "0Q10111011111001100110nnnnnddddd")
+ INST(FRSQRTE_3, "FRSQRTE", "0Q10111011111001110110nnnnnddddd")
++INST(LDSET32Orders, "LDSET, LDSETA, LDSETL, LDSETAL (32-bit)", "10111000AR1sssss001100nnnnnttttt")
++INST(LDCLR32Orders, "LDCLR, LDCLRA, LDCLRL, LDCLRAL (32-bit)", "10111000AR1sssss000100nnnnnttttt")
++INST(LDADD64Orders, "LDADD, LDADDA, LDADDL, LDADDAL (64-bit)", "11111000AR1sssss000000nnnnnttttt")
++INST(LDSET64Orders, "LDSET64Orders checked full-barrier", "11111000AR1sssss001100nnnnnttttt")
++INST(LDCLR64Orders, "LDCLR64Orders checked full-barrier", "11111000AR1sssss000100nnnnnttttt")
++INST(LDEOR64Orders, "LDEOR64Orders checked full-barrier", "11111000AR1sssss001000nnnnnttttt")
++INST(SWP64Orders, "SWP64Orders checked full-barrier", "11111000AR1sssss100000nnnnnttttt")
++INST(LDEOR32Orders, "LDEOR32Orders checked full-barrier", "10111000AR1sssss001000nnnnnttttt")
++INST(SWP32Orders, "SWP32Orders checked full-barrier", "10111000AR1sssss100000nnnnnttttt")
++INST(LDADD8Orders, "LDADD narrow checked all orders", "00111000AR1sssss000000nnnnnttttt")
++INST(LDCLR8Orders, "LDCLR narrow checked all orders", "00111000AR1sssss000100nnnnnttttt")
++INST(LDSET8Orders, "LDSET narrow checked all orders", "00111000AR1sssss001100nnnnnttttt")
++INST(LDEOR8Orders, "LDEOR narrow checked all orders", "00111000AR1sssss001000nnnnnttttt")
++INST(SWP8Orders, "SWP narrow checked all orders", "00111000AR1sssss100000nnnnnttttt")
++INST(LDADD16Orders, "LDADD narrow checked all orders", "01111000AR1sssss000000nnnnnttttt")
++INST(LDCLR16Orders, "LDCLR narrow checked all orders", "01111000AR1sssss000100nnnnnttttt")
++INST(LDSET16Orders, "LDSET narrow checked all orders", "01111000AR1sssss001100nnnnnttttt")
++INST(LDEOR16Orders, "LDEOR narrow checked all orders", "01111000AR1sssss001000nnnnnttttt")
++INST(SWP16Orders, "SWP narrow checked all orders", "01111000AR1sssss100000nnnnnttttt")
++INST(LDADD32Orders, "LDADD, LDADDA, LDADDL, LDADDAL (32-bit)", "10111000AR1sssss000000nnnnnttttt")
++INST(CAS64Orders, "CAS, CASA, CASL, CASAL (64-bit)", "110010001L1sssssO11111nnnnnttttt")
++INST(CAS8Orders, "CAS byte/halfword checked all orders", "000010001L1sssssO11111nnnnnttttt")
++INST(CAS16Orders, "CAS byte/halfword checked all orders", "010010001L1sssssO11111nnnnnttttt")
++INST(CAS32, "CAS, CASA, CASL, CASAL (32-bit only)", "100010001L1sssssO11111nnnnnttttt")
+ INST(LDXR, "LDXRB, LDXRH, LDXR", "zz00100001011111011111nnnnnttttt")
+ INST(LDAXR, "LDAXRB, LDAXRH, LDAXR", "zz00100001011111111111nnnnnttttt")
+ INST(STLLR, "STLLRB, STLLRH, STLLR", "zz00100010011111011111nnnnnttttt")
+ INST(STLR, "STLRB, STLRH, STLR", "zz00100010011111111111nnnnnttttt")
+ INST(LDLAR, "LDLARB, LDLARH, LDLAR", "zz00100011011111011111nnnnnttttt")
+ INST(LDAR, "LDARB, LDARH, LDAR", "zz00100011011111111111nnnnnttttt")
++INST(LDAPR_reg, "LDAPRB, LDAPRH, LDAPR", "zz11100010111111110000nnnnnttttt")
+ INST(REV, "REV", "z10110101100000000001onnnnnddddd")
+ INST(SUQADD_1, "SUQADD", "01011110zz100000001110nnnnnddddd")
+ INST(SQABS_1, "SQABS", "01011110zz100000011110nnnnnddddd")
+--- a/src/dynarmic/src/dynarmic/frontend/A64/translate/a64_translate.h
++++ b/src/dynarmic/src/dynarmic/frontend/A64/translate/a64_translate.h
+@@ -38,6 +38,12 @@
+     /// If this is false, we treat the instruction as a NOP.
+     /// If this is true, we emit an ExceptionRaised instruction.
+     bool hook_hint_instructions = true;
++
++    /// Research profile supplied immutably by the JIT; no PAC authentication.
++    bool research_pauth_disabled_profile = false;
++
++    /// Explicit TBI-disabled VA width, required by the opt-in PAC-strip model.
++    u32 research_pauth_address_space_bits = 0;
+ };
+ 
+ /**
+--- a/src/dynarmic/src/dynarmic/frontend/A64/translate/impl/a64_branch.cpp
++++ b/src/dynarmic/src/dynarmic/frontend/A64/translate/impl/a64_branch.cpp
+@@ -70,6 +70,16 @@
+     return false;
+ }
+ 
++bool TranslatorVisitor::RETA([[maybe_unused]] bool M) {
++    if (!options.research_pauth_disabled_profile) {
++        return UnallocatedEncoding();
++    }
++    // Both instruction-address keys are disabled in this explicit HLE profile.
++    // Reuse RET's branch/RSB behavior rather than advancing as a NOP. No guest
++    // bytes are changed, and no successful authentication is being claimed.
++    return RET(Reg::R30);
++}
++
+ bool TranslatorVisitor::CBZ(bool sf, Imm<19> imm19, Reg Rt) {
+     const size_t datasize = sf ? 64 : 32;
+     const s64 offset = concatenate(imm19, Imm<2>{0}).SignExtend<s64>();
+--- a/src/dynarmic/src/dynarmic/frontend/A64/translate/impl/impl.h
++++ b/src/dynarmic/src/dynarmic/frontend/A64/translate/impl/impl.h
+@@ -240,6 +240,30 @@
+     bool STLXR(Imm<2> size, Reg Rs, Reg Rn, Reg Rt);
+     bool STXP(Imm<1> size, Reg Rs, Reg Rt2, Reg Rn, Reg Rt);
+     bool STLXP(Imm<1> size, Reg Rs, Reg Rt2, Reg Rn, Reg Rt);
++    bool LDSET32Orders(bool acquire, bool release, Reg Rs, Reg Rn, Reg Rt);
++    bool LDCLR32Orders(bool acquire, bool release, Reg Rs, Reg Rn, Reg Rt);
++    bool LDADD64Orders(bool acquire, bool release, Reg Rs, Reg Rn, Reg Rt);
++    bool LDSET64Orders(bool acquire, bool release, Reg Rs, Reg Rn, Reg Rt);
++    bool LDCLR64Orders(bool acquire, bool release, Reg Rs, Reg Rn, Reg Rt);
++    bool LDEOR64Orders(bool acquire, bool release, Reg Rs, Reg Rn, Reg Rt);
++    bool SWP64Orders(bool acquire, bool release, Reg Rs, Reg Rn, Reg Rt);
++    bool LDEOR32Orders(bool acquire, bool release, Reg Rs, Reg Rn, Reg Rt);
++    bool SWP32Orders(bool acquire, bool release, Reg Rs, Reg Rn, Reg Rt);
++    bool LDADD8Orders(bool acquire, bool release, Reg Rs, Reg Rn, Reg Rt);
++    bool LDCLR8Orders(bool acquire, bool release, Reg Rs, Reg Rn, Reg Rt);
++    bool LDSET8Orders(bool acquire, bool release, Reg Rs, Reg Rn, Reg Rt);
++    bool LDEOR8Orders(bool acquire, bool release, Reg Rs, Reg Rn, Reg Rt);
++    bool SWP8Orders(bool acquire, bool release, Reg Rs, Reg Rn, Reg Rt);
++    bool LDADD16Orders(bool acquire, bool release, Reg Rs, Reg Rn, Reg Rt);
++    bool LDCLR16Orders(bool acquire, bool release, Reg Rs, Reg Rn, Reg Rt);
++    bool LDSET16Orders(bool acquire, bool release, Reg Rs, Reg Rn, Reg Rt);
++    bool LDEOR16Orders(bool acquire, bool release, Reg Rs, Reg Rn, Reg Rt);
++    bool SWP16Orders(bool acquire, bool release, Reg Rs, Reg Rn, Reg Rt);
++    bool LDADD32Orders(bool acquire, bool release, Reg Rs, Reg Rn, Reg Rt);
++    bool CAS64Orders(bool acquire, Reg Rs, bool release, Reg Rn, Reg Rt);
++    bool CAS8Orders(bool acquire, Reg Rs, bool release, Reg Rn, Reg Rt);
++    bool CAS16Orders(bool acquire, Reg Rs, bool release, Reg Rn, Reg Rt);
++    bool CAS32(bool acquire, Reg Rs, bool release, Reg Rn, Reg Rt);
+     bool LDXR(Imm<2> size, Reg Rn, Reg Rt);
+     bool LDAXR(Imm<2> size, Reg Rn, Reg Rt);
+     bool LDXP(Imm<1> size, Reg Rt2, Reg Rn, Reg Rt);
+@@ -248,6 +272,7 @@
+     bool STLR(Imm<2> size, Reg Rn, Reg Rt);
+     bool LDLAR(Imm<2> size, Reg Rn, Reg Rt);
+     bool LDAR(Imm<2> size, Reg Rn, Reg Rt);
++    bool LDAPR_reg(Imm<2> size, Reg Rn, Reg Rt);
+     bool CASP(bool sz, bool L, Reg Rs, bool o0, Reg Rn, Reg Rt);
+     bool CASB(bool L, Reg Rs, bool o0, Reg Rn, Reg Rt);
+     bool CASH(bool L, Reg Rs, bool o0, Reg Rn, Reg Rt);
+--- a/src/dynarmic/src/dynarmic/frontend/A64/translate/impl/load_store_exclusive.cpp
++++ b/src/dynarmic/src/dynarmic/frontend/A64/translate/impl/load_store_exclusive.cpp
+@@ -8,6 +8,271 @@
+ #include "dynarmic/frontend/A64/translate/impl/impl.h"
+ 
+ namespace Dynarmic::A64 {
++
++// CAS/CASA/CASL/CASAL share the same 32-bit atomic old-value operation.
++// The callback performs a full-barrier host CAS, conservatively stronger
++// than each requested ordering. No exclusive status or load/store pair.
++bool TranslatorVisitor::CAS32(bool /*acquire*/, Reg Rs, bool /*release*/, Reg Rn, Reg Rt) {
++    IR::U64 address;
++    if (Rn == Reg::SP) {
++        address = SP(64);
++    } else {
++        address = X(64, Rn);
++    }
++    const IR::U32 expected = X(32, Rs);
++    const IR::U32 desired = X(32, Rt);
++    const IR::U32 observed = ir.AtomicCompareExchange32(address, expected, desired);
++    X(32, Rs, observed); // SetW supplies architectural zero-extension; ZR discards.
++    return true;
++}
++
++bool TranslatorVisitor::CAS16Orders(bool /*acquire*/, Reg Rs, bool /*release*/, Reg Rn, Reg Rt) {
++    IR::U64 address;
++    if (Rn == Reg::SP) {
++        address = SP(64);
++    } else {
++        address = X(64, Rn);
++    }
++    const IR::U32 expected = X(32, Rs);
++    const IR::U32 desired = X(32, Rt);
++    const IR::U32 observed = ir.AtomicCompareExchange16(address, expected, desired);
++    X(32, Rs, observed); // SetW supplies architectural zero-extension; ZR discards.
++    return true;
++}
++
++bool TranslatorVisitor::CAS8Orders(bool /*acquire*/, Reg Rs, bool /*release*/, Reg Rn, Reg Rt) {
++    IR::U64 address;
++    if (Rn == Reg::SP) {
++        address = SP(64);
++    } else {
++        address = X(64, Rn);
++    }
++    const IR::U32 expected = X(32, Rs);
++    const IR::U32 desired = X(32, Rt);
++    const IR::U32 observed = ir.AtomicCompareExchange8(address, expected, desired);
++    X(32, Rs, observed); // SetW supplies architectural zero-extension; ZR discards.
++    return true;
++}
++
++bool TranslatorVisitor::CAS64Orders(bool /*acquire*/, Reg Rs, bool /*release*/, Reg Rn, Reg Rt) {
++    IR::U64 address;
++    if (Rn == Reg::SP) {
++        address = SP(64);
++    } else {
++        address = X(64, Rn);
++    }
++    const IR::U64 expected = X(64, Rs);
++    const IR::U64 desired = X(64, Rt);
++    const IR::U64 observed = ir.AtomicCompareExchange64(address, expected, desired);
++    X(64, Rs, observed); // Preserve all 64 bits; XZR discards only the result.
++    return true;
++}
++
++
++// The successful checked CAS is the single linearization point of this RMW.
++// All four ordering forms conservatively use the callback's full barriers.
++bool TranslatorVisitor::LDADD32Orders(bool /*acquire*/, bool /*release*/, Reg Rs, Reg Rn, Reg Rt) {
++    IR::U64 address;
++    if (Rn == Reg::SP) address = SP(64);
++    else address = X(64, Rn);
++    const IR::U32 operand = X(32, Rs); // Capture before a possibly aliased Rt write.
++    const IR::U32 observed = ir.AtomicFetchAdd32(address, operand);
++    X(32, Rt, observed);
++    return true;
++}
++
++bool TranslatorVisitor::SWP16Orders(bool /*acquire*/, bool /*release*/, Reg Rs, Reg Rn, Reg Rt) {
++    IR::U64 address;
++    if (Rn == Reg::SP) address = SP(64);
++    else address = X(64, Rn);
++    const IR::U32 operand = X(32, Rs); // Capture before a possibly aliased Rt write.
++    const IR::U32 observed = ir.AtomicExchange16(address, operand);
++    X(32, Rt, observed);
++    return true;
++}
++
++bool TranslatorVisitor::LDEOR16Orders(bool /*acquire*/, bool /*release*/, Reg Rs, Reg Rn, Reg Rt) {
++    IR::U64 address;
++    if (Rn == Reg::SP) address = SP(64);
++    else address = X(64, Rn);
++    const IR::U32 operand = X(32, Rs); // Capture before a possibly aliased Rt write.
++    const IR::U32 observed = ir.AtomicFetchXor16(address, operand);
++    X(32, Rt, observed);
++    return true;
++}
++
++bool TranslatorVisitor::LDSET16Orders(bool /*acquire*/, bool /*release*/, Reg Rs, Reg Rn, Reg Rt) {
++    IR::U64 address;
++    if (Rn == Reg::SP) address = SP(64);
++    else address = X(64, Rn);
++    const IR::U32 operand = X(32, Rs); // Capture before a possibly aliased Rt write.
++    const IR::U32 observed = ir.AtomicFetchOr16(address, operand);
++    X(32, Rt, observed);
++    return true;
++}
++
++bool TranslatorVisitor::LDCLR16Orders(bool /*acquire*/, bool /*release*/, Reg Rs, Reg Rn, Reg Rt) {
++    IR::U64 address;
++    if (Rn == Reg::SP) address = SP(64);
++    else address = X(64, Rn);
++    const IR::U32 operand = X(32, Rs); // Capture before a possibly aliased Rt write.
++    const IR::U32 observed = ir.AtomicFetchClear16(address, operand);
++    X(32, Rt, observed);
++    return true;
++}
++
++bool TranslatorVisitor::LDADD16Orders(bool /*acquire*/, bool /*release*/, Reg Rs, Reg Rn, Reg Rt) {
++    IR::U64 address;
++    if (Rn == Reg::SP) address = SP(64);
++    else address = X(64, Rn);
++    const IR::U32 operand = X(32, Rs); // Capture before a possibly aliased Rt write.
++    const IR::U32 observed = ir.AtomicFetchAdd16(address, operand);
++    X(32, Rt, observed);
++    return true;
++}
++
++bool TranslatorVisitor::SWP8Orders(bool /*acquire*/, bool /*release*/, Reg Rs, Reg Rn, Reg Rt) {
++    IR::U64 address;
++    if (Rn == Reg::SP) address = SP(64);
++    else address = X(64, Rn);
++    const IR::U32 operand = X(32, Rs); // Capture before a possibly aliased Rt write.
++    const IR::U32 observed = ir.AtomicExchange8(address, operand);
++    X(32, Rt, observed);
++    return true;
++}
++
++bool TranslatorVisitor::LDEOR8Orders(bool /*acquire*/, bool /*release*/, Reg Rs, Reg Rn, Reg Rt) {
++    IR::U64 address;
++    if (Rn == Reg::SP) address = SP(64);
++    else address = X(64, Rn);
++    const IR::U32 operand = X(32, Rs); // Capture before a possibly aliased Rt write.
++    const IR::U32 observed = ir.AtomicFetchXor8(address, operand);
++    X(32, Rt, observed);
++    return true;
++}
++
++bool TranslatorVisitor::LDSET8Orders(bool /*acquire*/, bool /*release*/, Reg Rs, Reg Rn, Reg Rt) {
++    IR::U64 address;
++    if (Rn == Reg::SP) address = SP(64);
++    else address = X(64, Rn);
++    const IR::U32 operand = X(32, Rs); // Capture before a possibly aliased Rt write.
++    const IR::U32 observed = ir.AtomicFetchOr8(address, operand);
++    X(32, Rt, observed);
++    return true;
++}
++
++bool TranslatorVisitor::LDCLR8Orders(bool /*acquire*/, bool /*release*/, Reg Rs, Reg Rn, Reg Rt) {
++    IR::U64 address;
++    if (Rn == Reg::SP) address = SP(64);
++    else address = X(64, Rn);
++    const IR::U32 operand = X(32, Rs); // Capture before a possibly aliased Rt write.
++    const IR::U32 observed = ir.AtomicFetchClear8(address, operand);
++    X(32, Rt, observed);
++    return true;
++}
++
++bool TranslatorVisitor::LDADD8Orders(bool /*acquire*/, bool /*release*/, Reg Rs, Reg Rn, Reg Rt) {
++    IR::U64 address;
++    if (Rn == Reg::SP) address = SP(64);
++    else address = X(64, Rn);
++    const IR::U32 operand = X(32, Rs); // Capture before a possibly aliased Rt write.
++    const IR::U32 observed = ir.AtomicFetchAdd8(address, operand);
++    X(32, Rt, observed);
++    return true;
++}
++
++bool TranslatorVisitor::SWP32Orders(bool /*acquire*/, bool /*release*/, Reg Rs, Reg Rn, Reg Rt) {
++    IR::U64 address;
++    if (Rn == Reg::SP) address = SP(64);
++    else address = X(64, Rn);
++    const IR::U32 operand = X(32, Rs); // Capture before a possibly aliased Rt write.
++    const IR::U32 observed = ir.AtomicExchange32(address, operand);
++    X(32, Rt, observed);
++    return true;
++}
++
++bool TranslatorVisitor::LDEOR32Orders(bool /*acquire*/, bool /*release*/, Reg Rs, Reg Rn, Reg Rt) {
++    IR::U64 address;
++    if (Rn == Reg::SP) address = SP(64);
++    else address = X(64, Rn);
++    const IR::U32 operand = X(32, Rs); // Capture before a possibly aliased Rt write.
++    const IR::U32 observed = ir.AtomicFetchXor32(address, operand);
++    X(32, Rt, observed);
++    return true;
++}
++
++// All four orders use the conservative full-barrier checked 64-bit CAS path.
++bool TranslatorVisitor::LDADD64Orders(bool /*acquire*/, bool /*release*/, Reg Rs, Reg Rn, Reg Rt) {
++    IR::U64 address;
++    if (Rn == Reg::SP) address = SP(64);
++    else address = X(64, Rn);
++    const IR::U64 operand = X(64, Rs); // Capture before a possibly aliased Rt write.
++    const IR::U64 observed = ir.AtomicFetchAdd64(address, operand);
++    X(64, Rt, observed);
++    return true;
++}
++
++bool TranslatorVisitor::SWP64Orders(bool /*acquire*/, bool /*release*/, Reg Rs, Reg Rn, Reg Rt) {
++    IR::U64 address;
++    if (Rn == Reg::SP) address = SP(64);
++    else address = X(64, Rn);
++    const IR::U64 operand = X(64, Rs); // Capture before a possibly aliased Rt write.
++    const IR::U64 observed = ir.AtomicExchange64(address, operand);
++    X(64, Rt, observed);
++    return true;
++}
++
++bool TranslatorVisitor::LDEOR64Orders(bool /*acquire*/, bool /*release*/, Reg Rs, Reg Rn, Reg Rt) {
++    IR::U64 address;
++    if (Rn == Reg::SP) address = SP(64);
++    else address = X(64, Rn);
++    const IR::U64 operand = X(64, Rs); // Capture before a possibly aliased Rt write.
++    const IR::U64 observed = ir.AtomicFetchXor64(address, operand);
++    X(64, Rt, observed);
++    return true;
++}
++
++bool TranslatorVisitor::LDCLR64Orders(bool /*acquire*/, bool /*release*/, Reg Rs, Reg Rn, Reg Rt) {
++    IR::U64 address;
++    if (Rn == Reg::SP) address = SP(64);
++    else address = X(64, Rn);
++    const IR::U64 operand = X(64, Rs); // Capture before a possibly aliased Rt write.
++    const IR::U64 observed = ir.AtomicFetchClear64(address, operand);
++    X(64, Rt, observed);
++    return true;
++}
++
++bool TranslatorVisitor::LDSET64Orders(bool /*acquire*/, bool /*release*/, Reg Rs, Reg Rn, Reg Rt) {
++    IR::U64 address;
++    if (Rn == Reg::SP) address = SP(64);
++    else address = X(64, Rn);
++    const IR::U64 operand = X(64, Rs); // Capture before a possibly aliased Rt write.
++    const IR::U64 observed = ir.AtomicFetchOr64(address, operand);
++    X(64, Rt, observed);
++    return true;
++}
++
++// Atomic bit-clear: the checked full-barrier CAS loop returns the old word.
++bool TranslatorVisitor::LDCLR32Orders(bool /*acquire*/, bool /*release*/, Reg Rs, Reg Rn, Reg Rt) {
++    IR::U64 address;
++    if (Rn == Reg::SP) address = SP(64);
++    else address = X(64, Rn);
++    const IR::U32 operand = X(32, Rs); // Capture before a possibly aliased Rt write.
++    const IR::U32 observed = ir.AtomicFetchClear32(address, operand);
++    X(32, Rt, observed);
++    return true;
++}
++
++// Atomic bit-set: the checked full-barrier CAS loop returns the old word.
++bool TranslatorVisitor::LDSET32Orders(bool /*acquire*/, bool /*release*/, Reg Rs, Reg Rn, Reg Rt) {
++    IR::U64 address;
++    if (Rn == Reg::SP) address = SP(64);
++    else address = X(64, Rn);
++    const IR::U32 operand = X(32, Rs); // Capture before a possibly aliased Rt write.
++    const IR::U32 observed = ir.AtomicFetchOr32(address, operand);
++    X(32, Rt, observed);
++    return true;
++}
+ 
+ static bool ExclusiveSharedDecodeAndOperation(TranslatorVisitor& v, bool pair, size_t size, bool L, bool o0, std::optional<Reg> Rs, std::optional<Reg> Rt2, Reg Rn, Reg Rt) {
+     // Shared Decode
+@@ -206,4 +471,10 @@
+     return OrderedSharedDecodeAndOperation(*this, size, L, o0, Rn, Rt);
+ }
+ 
++// RCsc acquire is a permitted stronger ordering than the RCpc load.
++// Reuse the actual ordered read, address capture and width zero-extension.
++bool TranslatorVisitor::LDAPR_reg(Imm<2> size, Reg Rn, Reg Rt) {
++    return LDAR(size, Rn, Rt);
++}
++
+ }  // namespace Dynarmic::A64
+--- a/src/dynarmic/src/dynarmic/frontend/A64/translate/impl/system.cpp
++++ b/src/dynarmic/src/dynarmic/frontend/A64/translate/impl/system.cpp
+@@ -34,6 +34,30 @@
+ };
+ 
+ bool TranslatorVisitor::HINT([[maybe_unused]] Imm<4> CRm, [[maybe_unused]] Imm<3> op2) {
++    // XPACLRI is a HINT and remains a NOP when the research feature is absent.
++    if (options.research_pauth_disabled_profile && CRm == 0 && op2 == 7) {
++        return XPAC_1(false, Reg::R30);
++    }
++    return true;
++}
++
++bool TranslatorVisitor::XPAC_1([[maybe_unused]] bool D, Reg Rd) {
++    if (!options.research_pauth_disabled_profile) {
++        return UnallocatedEncoding();
++    }
++    const auto bits = options.research_pauth_address_space_bits;
++    // This explicit HLE model has TBI disabled and equal instruction/data widths.
++    // Unsupported or unpropagated widths fail rather than silently assuming 36.
++    if (bits < 32 || bits > 55) {
++        return UnallocatedEncoding();
++    }
++    const IR::U64 pointer = X(64, Rd);
++    const u64 mask = (u64{1} << bits) - 1;
++    // Bit 55 selects the address extension; this is NOT a sign extend of bit VA-1.
++    const auto extension = ir.ArithmeticShiftRight(
++        ir.LogicalShiftLeft(pointer, ir.Imm8(8)), ir.Imm8(63));
++    X(64, Rd, ir.Or(ir.And(pointer, ir.Imm64(mask)),
++                   ir.And(extension, ir.Imm64(~mask))));
+     return true;
+ }
+ 
+--- a/src/dynarmic/src/dynarmic/interface/A64/config.h
++++ b/src/dynarmic/src/dynarmic/interface/A64/config.h
+@@ -129,6 +129,32 @@
+     virtual std::uint64_t GetTicksRemaining() = 0;
+     // Get value in the emulated counter-timer physical count register.
+     virtual std::uint64_t GetCNTPCT() = 0;
++
++    // Appended callback preserves previous virtual slot indices. nullopt must
++    // halt as MemoryAbort before any architectural destination writeback.
++    // Implementations must perform one real atomic old-value operation and
++    // coordinate it with the supplied monitor, after permission/pointer checks.
++    virtual std::optional<std::uint32_t> MemoryAtomicCompareExchange32(
++        VAddr, std::uint32_t, std::uint32_t, Dynarmic::ExclusiveMonitor*) {
++        return std::nullopt;
++    }
++
++    // Appended full-width checked callback; ordinary old virtual slot IDs stay unchanged.
++    virtual std::optional<std::uint64_t> MemoryAtomicCompareExchange64(
++        VAddr, std::uint64_t, std::uint64_t, Dynarmic::ExclusiveMonitor*) {
++        return std::nullopt;
++    }
++
++    // Appended narrow slots. Rebuild every callback producer/consumer coherently.
++    virtual std::optional<std::uint8_t> MemoryAtomicCompareExchange8(
++        VAddr, std::uint8_t, std::uint8_t, Dynarmic::ExclusiveMonitor*) {
++        return std::nullopt;
++    }
++
++    virtual std::optional<std::uint16_t> MemoryAtomicCompareExchange16(
++        VAddr, std::uint16_t, std::uint16_t, Dynarmic::ExclusiveMonitor*) {
++        return std::nullopt;
++    }
+ };
+ 
+ struct UserConfig {
+@@ -304,6 +330,13 @@
+     /// Internal use only
+     bool very_verbose_debugging_output = false;
+ 
++    /// Experimental HLE CPU profile for RETAA/RETAB with instruction-address
++    /// authentication (SCTLR.EnIA/EnIB) disabled.
++    /// This supports RETAA/B as ordinary returns; it does NOT implement pointer
++    /// signing, authentication, PAC key registers, or an authenticated profile.
++    /// Immutable for the lifetime of this JIT. Default preserves prior behavior.
++    bool research_pauth_disabled_profile = false;
++
+     inline bool HasOptimization(OptimizationFlag f) const {
+         if (!unsafe_optimizations) {
+             f &= all_safe_optimizations;
+--- a/src/dynarmic/src/dynarmic/interface/exclusive_monitor.h
++++ b/src/dynarmic/src/dynarmic/interface/exclusive_monitor.h
+@@ -64,6 +64,16 @@
+         return result;
+     }
+ 
++    // All guest-aware validation, pointer preparation, GPU/cache operations,
++    // scheduling locks, and logging must happen outside this critical section.
++    template<typename Function>
++    auto DoAtomicOperation(Function op) {
++        Lock();
++        struct Unlocker { SpinLock& lock; ~Unlocker() { lock.Unlock(); } } unlocker{lock};
++        for (VAddr& address : exclusive_addresses) address = INVALID_EXCLUSIVE_ADDRESS;
++        return op();
++    }
++
+     /// Unmark everything.
+     void Clear();
+     /// Unmark processor id
+--- a/src/dynarmic/src/dynarmic/ir/opcodes.h
++++ b/src/dynarmic/src/dynarmic/ir/opcodes.h
+@@ -77,6 +77,30 @@
+     case Opcode::A32InstructionSynchronizationBarrier:
+     case Opcode::A64DataMemoryBarrier:
+     case Opcode::A64DataSynchronizationBarrier:
++    case Opcode::A64AtomicCompareExchange32:
++    case Opcode::A64AtomicCompareExchange16:
++    case Opcode::A64AtomicCompareExchange8:
++    case Opcode::A64AtomicCompareExchange64:
++    case Opcode::A64AtomicFetchAdd32:
++    case Opcode::A64AtomicExchange16:
++    case Opcode::A64AtomicFetchXor16:
++    case Opcode::A64AtomicFetchOr16:
++    case Opcode::A64AtomicFetchClear16:
++    case Opcode::A64AtomicFetchAdd16:
++    case Opcode::A64AtomicExchange8:
++    case Opcode::A64AtomicFetchXor8:
++    case Opcode::A64AtomicFetchOr8:
++    case Opcode::A64AtomicFetchClear8:
++    case Opcode::A64AtomicFetchAdd8:
++    case Opcode::A64AtomicExchange32:
++    case Opcode::A64AtomicFetchXor32:
++    case Opcode::A64AtomicExchange64:
++    case Opcode::A64AtomicFetchXor64:
++    case Opcode::A64AtomicFetchClear64:
++    case Opcode::A64AtomicFetchOr64:
++    case Opcode::A64AtomicFetchAdd64:
++    case Opcode::A64AtomicFetchClear32:
++    case Opcode::A64AtomicFetchOr32:
+     case Opcode::A64InstructionSynchronizationBarrier:
+         return true;
+ 
+@@ -168,12 +192,12 @@
+ 
+ /// @brief Determines whether or not this instruction performs any kind of memory read.
+ constexpr bool IsMemoryRead(const Opcode op) noexcept {
+-    return IsSharedMemoryRead(op) || IsExclusiveMemoryRead(op);
++    return op == Opcode::A64AtomicCompareExchange32 || op == Opcode::A64AtomicCompareExchange16 || op == Opcode::A64AtomicCompareExchange8 || op == Opcode::A64AtomicCompareExchange64 || op == Opcode::A64AtomicFetchAdd32 || op == Opcode::A64AtomicExchange16 || op == Opcode::A64AtomicFetchXor16 || op == Opcode::A64AtomicFetchOr16 || op == Opcode::A64AtomicFetchClear16 || op == Opcode::A64AtomicFetchAdd16 || op == Opcode::A64AtomicExchange8 || op == Opcode::A64AtomicFetchXor8 || op == Opcode::A64AtomicFetchOr8 || op == Opcode::A64AtomicFetchClear8 || op == Opcode::A64AtomicFetchAdd8 || op == Opcode::A64AtomicExchange32 || op == Opcode::A64AtomicFetchXor32 || op == Opcode::A64AtomicExchange64 || op == Opcode::A64AtomicFetchXor64 || op == Opcode::A64AtomicFetchClear64 || op == Opcode::A64AtomicFetchOr64 || op == Opcode::A64AtomicFetchAdd64 || op == Opcode::A64AtomicFetchClear32 || op == Opcode::A64AtomicFetchOr32 || IsSharedMemoryRead(op) || IsExclusiveMemoryRead(op);
+ }
+ 
+ /// @brief Determines whether or not this instruction performs any kind of memory write.
+ constexpr bool IsMemoryWrite(const Opcode op) noexcept {
+-    return IsSharedMemoryWrite(op) || IsExclusiveMemoryWrite(op);
++    return op == Opcode::A64AtomicCompareExchange32 || op == Opcode::A64AtomicCompareExchange16 || op == Opcode::A64AtomicCompareExchange8 || op == Opcode::A64AtomicCompareExchange64 || op == Opcode::A64AtomicFetchAdd32 || op == Opcode::A64AtomicExchange16 || op == Opcode::A64AtomicFetchXor16 || op == Opcode::A64AtomicFetchOr16 || op == Opcode::A64AtomicFetchClear16 || op == Opcode::A64AtomicFetchAdd16 || op == Opcode::A64AtomicExchange8 || op == Opcode::A64AtomicFetchXor8 || op == Opcode::A64AtomicFetchOr8 || op == Opcode::A64AtomicFetchClear8 || op == Opcode::A64AtomicFetchAdd8 || op == Opcode::A64AtomicExchange32 || op == Opcode::A64AtomicFetchXor32 || op == Opcode::A64AtomicExchange64 || op == Opcode::A64AtomicFetchXor64 || op == Opcode::A64AtomicFetchClear64 || op == Opcode::A64AtomicFetchOr64 || op == Opcode::A64AtomicFetchAdd64 || op == Opcode::A64AtomicFetchClear32 || op == Opcode::A64AtomicFetchOr32 || IsSharedMemoryWrite(op) || IsExclusiveMemoryWrite(op);
+ }
+ 
+ /// @brief Determines whether or not this instruction performs any kind of memory access.
+--- a/src/dynarmic/src/dynarmic/ir/opcodes.inc
++++ b/src/dynarmic/src/dynarmic/ir/opcodes.inc
+@@ -779,3 +779,28 @@
+ A32OPC(CoprocStoreWords,                                    Void,           CoprocInfo,     U32                                             )
+ 
+ // clang-format on
++
++A64OPC(AtomicCompareExchange32, U32, U64, U64, U32, U32)
++A64OPC(AtomicFetchAdd32, U32, U64, U64, U32)
++A64OPC(AtomicCompareExchange64, U64, U64, U64, U64, U64)
++A64OPC(AtomicFetchOr32, U32, U64, U64, U32)
++A64OPC(AtomicFetchClear32, U32, U64, U64, U32)
++A64OPC(AtomicFetchAdd64, U64, U64, U64, U64)
++A64OPC(AtomicFetchOr64, U64, U64, U64, U64)
++A64OPC(AtomicFetchClear64, U64, U64, U64, U64)
++A64OPC(AtomicFetchXor64, U64, U64, U64, U64)
++A64OPC(AtomicExchange64, U64, U64, U64, U64)
++A64OPC(AtomicFetchXor32, U32, U64, U64, U32)
++A64OPC(AtomicExchange32, U32, U64, U64, U32)
++A64OPC(AtomicCompareExchange8, U32, U64, U64, U32, U32)
++A64OPC(AtomicCompareExchange16, U32, U64, U64, U32, U32)
++A64OPC(AtomicFetchAdd8, U32, U64, U64, U32)
++A64OPC(AtomicFetchClear8, U32, U64, U64, U32)
++A64OPC(AtomicFetchOr8, U32, U64, U64, U32)
++A64OPC(AtomicFetchXor8, U32, U64, U64, U32)
++A64OPC(AtomicExchange8, U32, U64, U64, U32)
++A64OPC(AtomicFetchAdd16, U32, U64, U64, U32)
++A64OPC(AtomicFetchClear16, U32, U64, U64, U32)
++A64OPC(AtomicFetchOr16, U32, U64, U64, U32)
++A64OPC(AtomicFetchXor16, U32, U64, U64, U32)
++A64OPC(AtomicExchange16, U32, U64, U64, U32)
+--- a/src/dynarmic/src/dynarmic/ir/opt_passes.cpp
++++ b/src/dynarmic/src/dynarmic/ir/opt_passes.cpp
+@@ -553,6 +553,37 @@
+     for (auto inst = block.instructions.begin(); inst != block.instructions.end(); ++inst) {
+         auto const opcode = inst->GetOpcode();
+         switch (opcode) {
++        case IR::Opcode::A64AtomicCompareExchange32:
++        case IR::Opcode::A64AtomicCompareExchange16:
++        case IR::Opcode::A64AtomicCompareExchange8:
++        case IR::Opcode::A64AtomicCompareExchange64:
++        case IR::Opcode::A64AtomicFetchAdd32:
++        case IR::Opcode::A64AtomicExchange16:
++        case IR::Opcode::A64AtomicFetchXor16:
++        case IR::Opcode::A64AtomicFetchOr16:
++        case IR::Opcode::A64AtomicFetchClear16:
++        case IR::Opcode::A64AtomicFetchAdd16:
++        case IR::Opcode::A64AtomicExchange8:
++        case IR::Opcode::A64AtomicFetchXor8:
++        case IR::Opcode::A64AtomicFetchOr8:
++        case IR::Opcode::A64AtomicFetchClear8:
++        case IR::Opcode::A64AtomicFetchAdd8:
++        case IR::Opcode::A64AtomicExchange32:
++        case IR::Opcode::A64AtomicFetchXor32:
++        case IR::Opcode::A64AtomicExchange64:
++        case IR::Opcode::A64AtomicFetchXor64:
++        case IR::Opcode::A64AtomicFetchClear64:
++        case IR::Opcode::A64AtomicFetchOr64:
++        case IR::Opcode::A64AtomicFetchAdd64:
++        case IR::Opcode::A64AtomicFetchClear32:
++        case IR::Opcode::A64AtomicFetchOr32:
++            // Mandatory memory-abort exit observes all preceding guest state,
++            // even when ordinary memory-abort checking is configured OFF.
++            reg_info = {};
++            vec_info = {};
++            sp_info = {};
++            nzcv_info = {};
++            break;
+         case IR::Opcode::A64GetW: {
+             const size_t index = A64::RegNumber(inst->GetArg(0).GetA64RegRef());
+             do_get(reg_info[index], inst, TrackingType::W);
+@@ -1191,11 +1222,27 @@
+     }
+ }
+ 
++static bool IsObservableOrderedA64Read(const IR::Inst& inst) {
++    switch (inst.GetOpcode()) {
++    case IR::Opcode::A64ReadMemory8:
++    case IR::Opcode::A64ReadMemory16:
++    case IR::Opcode::A64ReadMemory32:
++    case IR::Opcode::A64ReadMemory64:
++    case IR::Opcode::A64ReadMemory128: {
++        const auto type = inst.GetArg(2).GetAccType();
++        return type == IR::AccType::ORDERED || type == IR::AccType::ORDEREDRW ||
++               type == IR::AccType::LIMITEDORDERED;
++    }
++    default:
++        return false;
++    }
++}
++
+ static void DeadCodeElimination(IR::Block& block) {
+     // We iterate over the instructions in reverse order.
+     // This is because removing an instruction reduces the number of uses for earlier instructions.
+     for (auto it = block.instructions.rbegin(); it != block.instructions.rend(); ++it)
+-        if (!it->HasUses() && !MayHaveSideEffects(it->GetOpcode()))
++        if (!it->HasUses() && !MayHaveSideEffects(it->GetOpcode()) && !IsObservableOrderedA64Read(*it))
+             it->Invalidate();
+ }
+ 
+--- a/src/shader_recompiler/frontend/maxwell/translate/impl/load_store_local_shared.cpp
++++ b/src/shader_recompiler/frontend/maxwell/translate/impl/load_store_local_shared.cpp
+@@ -88,10 +88,31 @@
+     return ir.BitwiseAnd(ir.ShiftLeftLogical(offset, ir.Imm32(3)), ir.Imm32(16));
+ }
+ 
++IR::U1 LocalInBounds(TranslatorVisitor& v, const IR::U32& offset) {
++    const IR::U32 local_memory_size{v.ir.Imm32(v.env.LocalMemorySize())};
++    return v.ir.ILessThan(offset, local_memory_size, false);
++}
++
++// An out of bounds offset reads as zero. The load itself goes to word 0, so it never leaves
++// the local memory: hosts that fault on scratch accesses outside it (PS5) would kill the
++// process, e.g. a game indexing a local array with -1 after its intro.
+ IR::U32 LoadLocal(TranslatorVisitor& v, const IR::U32& word_offset, const IR::U32& offset) {
+-    const IR::U32 local_memory_size{v.ir.Imm32(v.env.LocalMemorySize())};
+-    const IR::U1 in_bounds{v.ir.ILessThan(offset, local_memory_size, false)};
+-    return IR::U32{v.ir.Select(in_bounds, v.ir.LoadLocal(word_offset), v.ir.Imm32(0))};
++    const IR::U1 in_bounds{LocalInBounds(v, offset)};
++    const IR::U32 safe_word_offset{v.ir.Select(in_bounds, word_offset, v.ir.Imm32(0))};
++    return IR::U32{v.ir.Select(in_bounds, v.ir.LoadLocal(safe_word_offset), v.ir.Imm32(0))};
++}
++
++// An out of bounds store is dropped: word 0 is rewritten with its own value.
++void WriteLocal(TranslatorVisitor& v, const IR::U32& word_offset, const IR::U32& offset,
++                const IR::U32& value) {
++    if (offset.IsImmediate()) {
++        v.ir.WriteLocal(word_offset, value);
++        return;
++    }
++    const IR::U1 in_bounds{LocalInBounds(v, offset)};
++    const IR::U32 safe_word_offset{v.ir.Select(in_bounds, word_offset, v.ir.Imm32(0))};
++    const IR::U32 safe_value{v.ir.Select(in_bounds, value, v.ir.LoadLocal(safe_word_offset))};
++    v.ir.WriteLocal(safe_word_offset, safe_value);
+ }
+ } // Anonymous namespace
+ 
+@@ -166,14 +187,14 @@
+     switch (bit_size) {
+     case 8: {
+         const IR::U32 bit{ByteOffset(ir, offset)};
+-        const IR::U32 value{ir.BitFieldInsert(ir.LoadLocal(word_offset), src, bit, ir.Imm32(8))};
+-        ir.WriteLocal(word_offset, value);
++        const IR::U32 value{ir.BitFieldInsert(LoadLocal(*this, word_offset, offset), src, bit, ir.Imm32(8))};
++        WriteLocal(*this, word_offset, offset, value);
+         break;
+     }
+     case 16: {
+         const IR::U32 bit{ShortOffset(ir, offset)};
+-        const IR::U32 value{ir.BitFieldInsert(ir.LoadLocal(word_offset), src, bit, ir.Imm32(16))};
+-        ir.WriteLocal(word_offset, value);
++        const IR::U32 value{ir.BitFieldInsert(LoadLocal(*this, word_offset, offset), src, bit, ir.Imm32(16))};
++        WriteLocal(*this, word_offset, offset, value);
+         break;
+     }
+     case 32:
+@@ -182,9 +203,10 @@
+         if (!IR::IsAligned(reg, static_cast<size_t>(bit_size / 32))) {
+             throw NotImplementedException("Unaligned source register");
+         }
+-        ir.WriteLocal(word_offset, src);
++        WriteLocal(*this, word_offset, offset, src);
+         for (int i = 1; i < bit_size / 32; ++i) {
+-            ir.WriteLocal(ir.IAdd(word_offset, ir.Imm32(i)), X(reg + i));
++            WriteLocal(*this, ir.IAdd(word_offset, ir.Imm32(i)), ir.IAdd(offset, ir.Imm32(i * 4)),
++                       X(reg + i));
+         }
+         break;
+     }

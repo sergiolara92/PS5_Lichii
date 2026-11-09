@@ -1,0 +1,787 @@
+--- a/headless/CMakeLists.txt
++++ b/headless/CMakeLists.txt
+@@ -773,6 +773,21 @@
+     endif()
+     if(EDEN_SHARED_JIT)
+         eden_shared_jit_interface()
++    endif()
++    # Experimental disabled-PAuth profile: the source header defaults OFF.
++    # Apply after compile-batch/shared-JIT overlays have generated their calls.
++    set(pauth_old "{conf.define_unpredictable_behaviour, conf.wall_clock_cntpct}")
++    set(pauth_new "{conf.define_unpredictable_behaviour, conf.wall_clock_cntpct, true, conf.research_pauth_disabled_profile, conf.page_table_address_space_bits}")
++    string(REPLACE "${pauth_old}" "${pauth_new}" jit_source "${jit_source}")
++    if(EDEN_SHARED_JIT)
++        set(pauth_share_old "const bool shared = eden_jit_shared && conf.page_table && !conf.enable_cycle_counting;")
++        string(FIND "${jit_source}" "${pauth_share_old}" pauth_share_at)
++        if(pauth_share_at LESS 0)
++            message(FATAL_ERROR "Pinned shared-JIT profile boundary changed")
++        endif()
++        string(REPLACE "${pauth_share_old}"
++            "const bool shared = eden_jit_shared && conf.page_table && !conf.enable_cycle_counting && !conf.research_pauth_disabled_profile && !conf.check_halt_on_memory_access;"
++            jit_source "${jit_source}")
+     endif()
+     write_derived("${PORT_BUILD_DIR}/a64_interface.cpp" "#include <chrono>\n#include <cstdio>\nextern \"C\" void eden_jit_evacuation(unsigned core) __attribute__((weak));\nextern \"C\" void eden_jit_compile(unsigned core, unsigned long long ns) __attribute__((weak));\n${jit_source}")
+     get_target_property(jit_sources dynarmic SOURCES)
+@@ -3432,7 +3447,11 @@
+ 
+ # Explicit isolated research route; include only after the deferred frontend
+ # and its existing miniz target have been fully declared.
++option(PROSPERO_NATIVE_STARTUP_RESEARCH "Compile default-off native diagnostic PAuth/Remote route profiles" OFF)
+ option(PROSPERO_DIRECT_FRONTEND_ROUTE "Compile the explicit load-only research route" OFF)
++if(PROSPERO_NATIVE_STARTUP_RESEARCH AND (NOT PS5_NATIVE OR NOT PROSPERO_DIRECT_FRONTEND_ROUTE))
++    message(FATAL_ERROR "Native startup research requires PS5_NATIVE and the explicit frontend route")
++endif()
+ if(PROSPERO_DIRECT_FRONTEND_ROUTE)
+     include("${EDEN_PORT_DIR}/research/direct-loader-prototype/direct_loader_targets.cmake")
+ endif()
+--- /dev/null
++++ b/headless/folder_game_entry.h
+@@ -0,0 +1,26 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++#pragma once
++#include <string>
++#include <string_view>
++namespace Eden {
++// A small explicit descriptor for an extracted game, never a renamed NSP/XCI.
++inline bool IsFolderGameEntry(std::string_view path) {
++    const auto separator = path.find_last_of('/');
++    const auto name = path.substr(separator == std::string_view::npos ? 0 : separator + 1);
++    if (name.size() <= 5) return false;
++    constexpr std::string_view suffix = ".eden";
++    const auto tail = path.substr(path.size() - suffix.size());
++    for (std::size_t i = 0; i < suffix.size(); ++i) {
++        const auto c = static_cast<unsigned char>(tail[i]);
++        if ((c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c) != static_cast<unsigned char>(suffix[i]))
++            return false;
++    }
++    return true;
++}
++inline std::string LibraryGameKey(std::string_view path, std::string_view roms) {
++    if (!roms.empty() && roms.back() == '/' && path.starts_with(roms))
++        return std::string(path.substr(roms.size()));
++    const auto slash = path.find_last_of('/');
++    return std::string(path.substr(slash == std::string_view::npos ? 0 : slash + 1));
++}
++} // namespace Eden
+--- a/headless/main.cpp
++++ b/headless/main.cpp
+@@ -52,6 +52,7 @@
+ #include "load_address.h"
+ #include "preferences.h"
+ #include "metadata_bridge.h"
++#include "folder_game_entry.h"
+ #ifdef EDEN_PS5_OPENGL
+ #include "graphics.h"
+ #include "video_core/renderer_base.h"
+@@ -653,9 +654,29 @@
+ #endif
+             return 0;
+         }
++        const std::string library_entry = selected_game;
+         try {
+         launch_error.clear();
+ #ifdef PROSPERO_DIRECT_RESEARCH
++        if (!research_selected && Eden::IsFolderGameEntry(selected_game)) {
++            research = Prospero::Development::ResearchRoute(selected_game);
++            if (research.Invalid()) throw std::runtime_error(research.Error());
++            if (!research.Pending()) throw std::runtime_error("This extracted game entry is disabled");
++            selected_game = research.TakeEntryPoint();
++            research_selected = true;
++        }
++#endif
++#ifdef PROSPERO_DIRECT_RESEARCH
++        // Declared before all Core objects: reset/restore only after complete teardown,
++        // including load failure and load-only continue. Ordinary games force profiles Off.
++        Prospero::Development::ResearchProfileLease research_profiles(
++            research_selected, research_selected && research.PAuthDisabledProfile(),
++            research_selected && research.RemoteRegionProfile(),
++            research_selected && research.StrictMemoryAbortsRequested());
++        // Inactive until the exact real loader has accepted its immutable NPDM.
++        // Declared before Core so rollback follows complete teardown on every unwind.
++        Prospero::Development::StrictMemoryAbortLease research_memory_abort_lease(
++            Settings::values.cpuopt_ignore_memory_aborts);
+         if (research_selected) {
+             if (research.Mode() == Prospero::Development::ResearchMode::LoadOnly) {
+                 const auto result = research.PerformLoadOnly();
+@@ -692,7 +713,7 @@
+         else setenv("PS5VK_CAPTURE_SCANOUT", "1", 1);
+         std::printf("EDEN_VULKAN_MEASUREMENT quiet=%d captures=%d\n",
+                     performance_run, !performance_run);
+-        const auto game_video = Eden::LoadGameSettings(eden_game_title_id(selected_game.c_str()));
++        const auto game_video = Eden::LoadGameSettings(eden_game_title_id(library_entry.c_str()));
+         const auto backend = automatic_launch ?
+             (recovery_opengl ? Eden::GraphicsBackend::OpenGL : Eden::GraphicsBackend::Vulkan) :
+             game_video.renderer >= 0 ?
+@@ -700,7 +721,7 @@
+             Eden::LoadPreferences().backend;
+ #else
+         // Library > Game settings take precedence over Settings > Video.
+-        const auto game_video = Eden::LoadGameSettings(eden_game_title_id(selected_game.c_str()));
++        const auto game_video = Eden::LoadGameSettings(eden_game_title_id(library_entry.c_str()));
+         const auto backend = game_video.renderer >= 0 ?
+             (game_video.renderer == 0 ? Eden::GraphicsBackend::OpenGL : Eden::GraphicsBackend::Vulkan) :
+             Eden::LoadPreferences().backend;
+@@ -720,7 +741,7 @@
+         const char* guest = selected_game.c_str();
+         // The audio and the renderer read this game's own settings (Library > Game settings).
+ #ifdef PS5_NATIVE
+-        const uint64_t game_title = game ? eden_game_title_id(guest) : 0;
++        const uint64_t game_title = game ? eden_game_title_id(library_entry.c_str()) : 0;
+ #else
+         const uint64_t game_title = 0;
+ #endif
+@@ -730,8 +751,7 @@
+         {
+             const std::string roms = Eden::AssetsPath("roms/");
+             Eden::Loading::SetArtFromCover(Eden::CoverFile(
+-                selected_game.rfind(roms, 0) == 0 ? selected_game.substr(roms.size()) :
+-                                                    std::filesystem::path(selected_game).filename().string()));
++                Eden::LibraryGameKey(library_entry, roms)));
+         }
+         const unsigned cycles = game ? 1 : 3;
+         const bool devices = EDEN_DEVICE_FRONTEND;
+@@ -746,6 +766,7 @@
+         constexpr bool shutdown_sweep = false;
+ #else
+         const char* guest = argc >= 2 ? argv[1] : nullptr;
++        const std::string library_entry = guest ? guest : "";
+         const uint64_t game_title = 0;  // the host build has no game's own settings
+         unsigned cycles = 1;
+         bool devices = false;
+@@ -1120,7 +1141,7 @@
+ #else
+         Settings::values.use_docked_mode.SetValue(Settings::ConsoleMode::Handheld);
+ #if defined(PS5_NATIVE) && defined(EDEN_PS5_OPENGL)
+-        const bool docked = Eden::LoadGameDocked(eden_game_title_id(guest));
++        const bool docked = Eden::LoadGameDocked(eden_game_title_id(library_entry.c_str()));
+         Settings::values.use_docked_mode.SetValue(docked ? Settings::ConsoleMode::Docked
+                                                        : Settings::ConsoleMode::Handheld);
+         Eden::Report("launch", docked ? "Console mode: Docked" : "Console mode: Handheld");
+@@ -1140,7 +1161,7 @@
+                 Settings::ScalingFilter::Bilinear, Settings::ScalingFilter::Fsr, Settings::ScalingFilter::Bicubic,
+                 Settings::ScalingFilter::NearestNeighbor};
+             // Settings > Video, with what the game does differently (Library > Game settings > Video).
+-            const auto video = Eden::PreferencesFor(eden_game_title_id(guest));
++            const auto video = Eden::PreferencesFor(eden_game_title_id(library_entry.c_str()));
+             const int resolution = video.resolution;
+             const int filter = video.upscaling_filter;
+             Settings::values.resolution_setup.SetValue(resolutions[resolution]);
+@@ -1298,7 +1319,7 @@
+             // Speed against accuracy ("performance" in the settings file, settings_store.h): each
+             // one is off unless chosen there, for every game or for this one. The levels start
+             // every session at their exact values (above), so one that is not chosen is off.
+-            const auto speed = Eden::LoadPerformance(eden_game_title_id(guest));
++            const auto speed = Eden::LoadPerformance(eden_game_title_id(library_entry.c_str()));
+             Settings::values.use_asynchronous_shaders = speed.async_shaders;
+             if (speed.fast_gpu) {
+                 // Nothing calls UpdateGPUAccuracy() here; set the live value too.
+@@ -1325,6 +1346,15 @@
+                 speed.memory_layout == 1 ? Settings::MemoryLayout::Memory_6Gb
+                 : speed.memory_layout == 2 ? Settings::MemoryLayout::Memory_8Gb
+                                            : Settings::MemoryLayout::Memory_4Gb;
++#ifdef PROSPERO_DIRECT_RESEARCH
++            // Match the measured 12 GiB HLE layout for this verified research
++            // title only. Actual guest pages remain backed/charged on demand;
++            // this neither increases PS5 physical memory nor promises headroom.
++            if (research_selected && research.VerifiedExtendedMemoryProfile()) {
++                Settings::values.memory_layout_mode = Settings::MemoryLayout::Memory_12Gb;
++                Eden::Report("research memory", "Verified title: experimental 12 GiB guest layout; real physical pool accounting retained");
++            }
++#endif
+             Eden::Report("launch",
+                          ("Memory layout: " + std::string{Eden::kMemoryLayoutKeys[speed.memory_layout]} +
+                           " (" + std::to_string(Eden::kMemoryLayoutGib[speed.memory_layout]) +
+@@ -1364,11 +1394,11 @@
+             // What a crash report says was running.
+             char title_id[20];
+             std::snprintf(title_id, sizeof(title_id), "%016llx",
+-                          static_cast<unsigned long long>(eden_game_title_id(guest)));
++                          static_cast<unsigned long long>(eden_game_title_id(library_entry.c_str())));
+             // The game's mods, minus those switched off in the launcher (Library > Game settings >
+             // Mods and Cheats): Eden's patch manager skips the names in this list. The game's Mods
+             // and Cheats switches add theirs (mods.h).
+-            const u64 title = eden_game_title_id(guest);
++            const u64 title = eden_game_title_id(library_entry.c_str());
+             // The game's own folder (Mods::SessionGameFolder) was found with its post-processing.
+             const auto all_mods = Eden::Mods::List(
+                 {Eden::AssetsPath("mods"), Eden::AssetsPath("cheats"), Eden::Mods::SessionGameFolder()}, title);
+@@ -1440,7 +1470,7 @@
+             int language = Eden::kLanguageSettings[choice];
+ #ifdef PS5_NATIVE
+             if (game && guest)
+-                language = eden_game_language(guest, Eden::AssetsPath("keys").c_str(), eden_game_title_id(guest), language);
++                language = eden_game_language(guest, Eden::AssetsPath("keys").c_str(), eden_game_title_id(library_entry.c_str()), language);
+ #endif
+             Settings::values.language_index.SetValue(static_cast<Settings::Language>(language));
+             Settings::values.region_index.SetValue(static_cast<Settings::Region>(Eden::kLanguageRegions[choice]));
+@@ -1534,7 +1564,7 @@
+             Settings::values.rng_seed_enabled.SetValue(false);
+             Eden::code_seed = -1;
+             if (game && guest) {
+-                const auto rng_seed = Eden::LoadGameSettings(eden_game_title_id(guest)).rng_seed;
++                const auto rng_seed = Eden::LoadGameSettings(eden_game_title_id(library_entry.c_str())).rng_seed;
+                 if (rng_seed >= 0) {
+                     Eden::code_seed = rng_seed;
+                     Eden::Report("launch", ("RNG seed: " + std::to_string(rng_seed)).c_str());
+@@ -1544,7 +1574,7 @@
+             Core::System system;
+ #ifdef PROSPERO_DIRECT_RESEARCH
+             std::optional<Prospero::Development::FactoryLease> research_factory;
+-            if (research_selected) research_factory.emplace(research.InstallFactory(system));
++            if (research_selected) research_factory.emplace(research.InstallFactory(system, &research_memory_abort_lease));
+ #endif
+             SCOPE_EXIT { game_contents.ClearAllEntries(); };
+             passed("core_constructed");
+@@ -1657,7 +1687,7 @@
+                 }
+ #ifdef PS5_NATIVE
+                 if (game) {
+-                    const auto filename = std::filesystem::path(guest).filename().string();
++                    const auto filename = Eden::LibraryGameKey(library_entry, Eden::AssetsPath("roms/"));
+                     const bool saved_last = Eden::SaveLastGame(filename);
+                     const bool saved_recent = Eden::SaveRecentGame(filename);
+                     if (!saved_last || !saved_recent)
+@@ -2128,7 +2158,7 @@
+                     // (RADV_DEBUG=syncshaders), so the per-boot rate can exceed the usual ~1 in 5.
+                     if (!research_selected && game && session_seconds < 60 && guest_fault_retries < 4) {
+                         ++guest_fault_retries;
+-                        relaunch_game = selected_game;
++                        relaunch_game = library_entry;
+                         return_to_menu = true;
+                         LOG_WARNING(Frontend, "EDEN_GUEST_FAULT_RETRY {} after {:.1f} s: {}", guest_fault_retries,
+                                     session_seconds, completion->guest_fault);
+--- a/headless/metadata_bridge.cpp
++++ b/headless/metadata_bridge.cpp
+@@ -1,4 +1,9 @@
+ #include "game_name.h"
++#include "folder_game_entry.h"
++#ifdef PROSPERO_DIRECT_RESEARCH
++#include "research/direct-loader-prototype/research_descriptor.h"
++#include "core/file_sys/program_metadata.h"
++#endif
+ #include "metadata_bridge.h"
+ #include "assets_dir.h"
+ #include "diagnostics.h"
+@@ -224,6 +229,18 @@
+     std::string path = rom_path;
+     std::transform(path.begin(), path.end(), path.begin(),
+                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
++#ifdef PROSPERO_DIRECT_RESEARCH
++    if (Eden::IsFolderGameEntry(path)) {
++        try {
++            const auto descriptor = Prospero::Development::ReadResearchDescriptor(rom_path);
++            if (descriptor.state != Prospero::Development::DescriptorState::Ready) return 0;
++            const auto npdm = vfs.OpenFile((descriptor.exefs / "main.npdm").string(), FileSys::OpenMode::Read);
++            if (!npdm || npdm->GetSize() < 0x80 || npdm->GetSize() > 64 * 1024) return 0;
++            FileSys::ProgramMetadata metadata;
++            return metadata.Load(npdm) == Loader::ResultStatus::Success ? metadata.GetTitleID() : 0;
++        } catch (const std::exception&) { return 0; }
++    }
++#endif
+     if (path.ends_with(".xci")) {
+         FileSys::XCI image(file);
+         return image.GetStatus() == Loader::ResultStatus::Success ? image.GetProgramTitleID() : 0;
+@@ -240,6 +257,18 @@
+                                size_t title_capacity) {
+     if (!rom_path || !keys_dir || !cover_tga_path || !title || title_capacity == 0) return 0;
+     title[0] = '\0';
++#ifdef PROSPERO_DIRECT_RESEARCH
++    if (Eden::IsFolderGameEntry(rom_path)) {
++        try {
++            const auto descriptor = Prospero::Development::ReadResearchDescriptor(rom_path);
++            if (descriptor.state != Prospero::Development::DescriptorState::Ready) return 0;
++            const auto name = Eden::PlainName(std::filesystem::path(rom_path).stem().string());
++            if (!Eden::UsableName(name)) return 0;
++            std::snprintf(title, title_capacity, "%s", name.c_str());
++            return EDEN_METADATA_TITLE;
++        } catch (const std::exception&) { return 0; }
++    }
++#endif
+     Common::FS::SetEdenPath(Common::FS::EdenPath::KeysDir, keys_dir);
+     FileSys::RealVfsFilesystem vfs;
+     const auto file = vfs.OpenFile(rom_path, FileSys::OpenMode::Read);
+@@ -266,6 +295,8 @@
+ 
+ uint32_t eden_game_supported_languages(const char* rom_path, const char* keys_dir) {
+     if (!rom_path || !keys_dir) return 0;
++    // Extracted entries have no supplied control NACP; do not parse JSON as an archive.
++    if (Eden::IsFolderGameEntry(rom_path)) return 0;
+     if (const auto known = GameLanguages().find(rom_path); known != GameLanguages().end()) return known->second;
+     try {
+         Common::FS::SetEdenPath(Common::FS::EdenPath::KeysDir, keys_dir);
+--- a/headless/prosperoeden/eden_services.cpp
++++ b/headless/prosperoeden/eden_services.cpp
+@@ -12,6 +12,7 @@
+ #include "profiles.h"
+ #include "update_notice.h"
+ #include "game_name.h"
++#include "folder_game_entry.h"
+ #include "native_directory.h"
+ #include "reshade_folder.h"
+ #include "pe/core/strings.hpp"
+@@ -290,7 +291,11 @@
+     const auto rom = [](const std::string& name) {
+         std::string lower = name;
+         for (char& c : lower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+-        return lower.ends_with(".nsp") || lower.ends_with(".xci");
++        return lower.ends_with(".nsp") || lower.ends_with(".xci")
++#ifdef PROSPERO_DIRECT_RESEARCH
++            || Eden::IsFolderGameEntry(lower)
++#endif
++            ;
+     };
+     const std::string roms = Eden::AssetsPath("roms");
+     std::vector<std::string> files;
+@@ -764,8 +769,8 @@
+         if (stat(path.c_str(), &info) != 0 || !S_ISREG(info.st_mode)) continue;
+         pe::ui::Game game;
+         game.name = CleanTitle(std::filesystem::path(file).filename().string());
+-        game.format = format;
+-        game.size = SizeLabel(static_cast<double>(info.st_size));
++        game.format = Eden::IsFolderGameEntry(file) ? "EXEFS" : format;
++        game.size = Eden::IsFolderGameEntry(file) ? tr("Folder") : SizeLabel(static_cast<double>(info.st_size));
+         game.file = file;
+         // A game whose data cannot be read is still listed, by its file name.
+         try {
+@@ -783,6 +788,8 @@
+                 game.cover = cover;
+             else
+                 (void)std::remove(staged.c_str());
++            if (Eden::IsFolderGameEntry(file) && game.cover.empty() && Eden::FileExists(cover))
++                game.cover = cover;
+             game.title_id = eden_game_title_id(path.c_str());
+             if (const std::string folder = GameFolderOf(file); game.title_id && !folder.empty()) {
+                 const std::lock_guard folders(game_folders_lock_);
+--- a/headless/research/direct-loader-prototype/direct_loader_targets.cmake
++++ b/headless/research/direct-loader-prototype/direct_loader_targets.cmake
+@@ -100,6 +100,16 @@
+     target_link_libraries(prospero_direct_development_loader PUBLIC eden_zip_vfs)
+     target_link_libraries(eden-headless PRIVATE prospero_direct_development_loader)
+     target_compile_definitions(eden-headless PRIVATE PROSPERO_DIRECT_RESEARCH=1)
++    if(NOT TARGET eden-metadata)
++        message(FATAL_ERROR "Folder-game library integration requires the real eden-metadata target")
++    endif()
++    target_compile_definitions(eden-metadata PRIVATE PROSPERO_DIRECT_RESEARCH=1)
++    target_link_libraries(eden-metadata PRIVATE prospero_direct_development_loader)
++    if(PROSPERO_NATIVE_STARTUP_RESEARCH)
++        target_compile_definitions(core PRIVATE PROSPERO_NATIVE_STARTUP_RESEARCH=1)
++        target_compile_definitions(eden-headless PRIVATE PROSPERO_NATIVE_STARTUP_RESEARCH=1)
++        target_compile_definitions(prospero_direct_development_loader PRIVATE PROSPERO_NATIVE_STARTUP_RESEARCH=1)
++    endif()
+     if(PROSPERO_DIRECT_ALLOW_EXECUTE)
+         target_compile_definitions(prospero_direct_development_loader PRIVATE PROSPERO_DIRECT_ALLOW_EXECUTE=1)
+         message(WARNING "Research execute requested: host/Core runtime and console compatibility are unvalidated")
+--- /dev/null
++++ b/headless/research/direct-loader-prototype/research_cpu_setting_lease.h
+@@ -0,0 +1,45 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++#pragma once
++#include <cstdio>
++#include <cstdlib>
++#include <stdexcept>
++#include "common/settings_setting.h"
++namespace Prospero::Development {
++// The actual pinned cpuopt_ignore_memory_aborts is a global Setting<bool>,
++// not SwitchableSetting. Never reinterpret a custom/global selection layer.
++class StrictMemoryAbortLease final {
++public:
++    explicit StrictMemoryAbortLease(Settings::Setting<bool>& setting) : setting(setting) {}
++    ~StrictMemoryAbortLease() noexcept { RestoreOrAbort(); }
++    StrictMemoryAbortLease(const StrictMemoryAbortLease&) = delete;
++    StrictMemoryAbortLease& operator=(const StrictMemoryAbortLease&) = delete;
++    StrictMemoryAbortLease(StrictMemoryAbortLease&&) = delete;
++    StrictMemoryAbortLease& operator=(StrictMemoryAbortLease&&) = delete;
++    void Activate() {
++#if !defined(PROSPERO_NATIVE_STARTUP_RESEARCH) || !PROSPERO_NATIVE_STARTUP_RESEARCH
++        throw std::runtime_error("Native strict memory research profile is disabled in this build");
++#else
++        if (active) return;
++        if (setting.Switchable())
++            throw std::runtime_error("Strict memory lease requires the reviewed global Setting<bool> type");
++        previous = setting.GetValue();
++        active = true;
++        try { setting.SetValue(false); }
++        catch (...) { RestoreOrAbort(); throw; }
++#endif
++    }
++    bool Active() const noexcept { return active; }
++private:
++    Settings::Setting<bool>& setting;
++    bool previous = false;
++    bool active = false;
++    void RestoreOrAbort() noexcept {
++        if (!active) return;
++        try { setting.SetValue(previous); active = false; }
++        catch (...) {
++            std::fputs("NATIVE_RESEARCH strict_memory_setting_restore_failed action=abort\n", stderr);
++            std::abort();
++        }
++    }
++};
++} // namespace Prospero::Development
+--- a/headless/research/direct-loader-prototype/research_descriptor.cpp
++++ b/headless/research/direct-loader-prototype/research_descriptor.cpp
+@@ -44,10 +44,20 @@
+         if (root.contains("enabled") && !root["enabled"].is_boolean())
+             throw std::runtime_error("enabled must be boolean");
+         if (!root.value("enabled", false)) return result;
+-        Keys(root, {"schema", "enabled", "mode", "exefs", "romfs", "required_modules"});
++        Keys(root, {"schema", "enabled", "mode", "exefs", "romfs", "required_modules", "profiles"});
+         const auto mode = root.value("mode", std::string("load-only"));
+         if (mode == "execute") result.mode = ResearchMode::Execute;
+         else if (mode != "load-only") throw std::runtime_error("mode must be load-only or execute");
++        if (root.contains("profiles")) {
++            const auto& profiles = root["profiles"];
++            Keys(profiles, {"pauth_disabled", "remote_region", "strict_memory_aborts"});
++            for (const char* name : {"pauth_disabled", "remote_region", "strict_memory_aborts"})
++                if (profiles.contains(name) && !profiles[name].is_boolean())
++                    throw std::runtime_error(std::string("profiles.") + name + " must be boolean");
++            result.pauth_disabled_profile = profiles.value("pauth_disabled", false);
++            result.remote_region_profile = profiles.value("remote_region", false);
++            result.strict_memory_aborts_profile = profiles.value("strict_memory_aborts", false);
++        }
+         result.exefs = Absolute(root, "exefs");
+         if (root.contains("required_modules")) {
+             if (!root["required_modules"].is_array() || root["required_modules"].empty())
+--- a/headless/research/direct-loader-prototype/research_descriptor.h
++++ b/headless/research/direct-loader-prototype/research_descriptor.h
+@@ -17,6 +17,9 @@
+     std::uint64_t cache_quota_bytes = 1024ULL * 1024 * 1024;
+     std::uint64_t max_entry_bytes = 512ULL * 1024 * 1024;
+     bool exclude_listing = false;
++    bool pauth_disabled_profile = false;
++    bool remote_region_profile = false;
++    bool strict_memory_aborts_profile = false;
+     std::vector<std::string> required_modules{"main"};
+     std::string error;
+ };
+--- /dev/null
++++ b/headless/research/direct-loader-prototype/research_execution_profile.h
+@@ -0,0 +1,11 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++#pragma once
++#include <cstdint>
++namespace Prospero::Development {
++inline constexpr std::uint64_t StrictMemoryProgramId = 0x0400c3f00006e000ULL;
++constexpr bool SelectStrictMemoryProfile(bool requested, bool execute, std::uint64_t program_id,
++                                        bool is_64_bit, bool is_39_bit, bool is_application) {
++    return requested && execute && program_id == StrictMemoryProgramId &&
++           is_64_bit && is_39_bit && is_application;
++}
++} // namespace Prospero::Development
+--- a/headless/research/direct-loader-prototype/research_frontend.cpp
++++ b/headless/research/direct-loader-prototype/research_frontend.cpp
+@@ -1,5 +1,10 @@
+ // SPDX-License-Identifier: GPL-3.0-or-later
+ #include "research_frontend.h"
++#include "research_execution_profile.h"
++#include "research_npdm_snapshot.h"
++#include "core/file_sys/program_metadata.h"
++#include "core/file_sys/vfs/vfs_layered.h"
++#include "core/file_sys/vfs/vfs_vector.h"
+ #include "direct_development_loader.h"
+ #include "factory_acquisition_gate.h"
+ #include "core/loader/development_factory.h"
+@@ -29,6 +34,8 @@
+     std::filesystem::path entry;
+     bool consumed = false;
+     bool prepared = false;
++    bool strict_target_verified = false;
++    u64 strict_program_id = 0;
+     std::atomic<unsigned> matches{};
+ };
+ 
+@@ -48,6 +55,16 @@
+ bool ResearchRoute::Invalid() const { return state->descriptor.state == DescriptorState::Invalid; }
+ const std::string& ResearchRoute::Error() const { return state->descriptor.error; }
+ ResearchMode ResearchRoute::Mode() const { return state->descriptor.mode; }
++bool ResearchRoute::PAuthDisabledProfile() const { return state->descriptor.pauth_disabled_profile; }
++bool ResearchRoute::RemoteRegionProfile() const { return state->descriptor.remote_region_profile; }
++// Only the actual bounded NPDM snapshot verified by TakeEntryPoint can select
++// this research layout. This does not attest a retail RAM configuration.
++bool ResearchRoute::VerifiedExtendedMemoryProfile() const {
++    return state->prepared && state->descriptor.mode == ResearchMode::Execute &&
++           state->descriptor.remote_region_profile && state->strict_target_verified &&
++           state->strict_program_id == 0x0400c3f00006e000ULL;
++}
++bool ResearchRoute::StrictMemoryAbortsRequested() const { return state->descriptor.strict_memory_aborts_profile; }
+ 
+ std::string ResearchRoute::TakeEntryPoint() {
+     if (!Pending()) throw std::runtime_error("No pending explicit research input");
+@@ -82,6 +99,31 @@
+         }
+         const auto report = ValidateInputs(state->inputs);
+         if (report.status != Loader::ResultStatus::Success) throw std::runtime_error("Research preflight: " + report.detail);
++        if (descriptor.strict_memory_aborts_profile && Mode() == ResearchMode::Execute) {
++            const auto original = state->inputs.exefs;
++            const auto npdm = original->GetFile("main.npdm");
++            constexpr std::size_t MaximumNpdmBytes = 64 * 1024;
++            const auto size = npdm ? npdm->GetSize() : 0;
++            if (!npdm || size < 0x80 || size > MaximumNpdmBytes)
++                throw std::runtime_error("Strict research NPDM snapshot requires a bounded complete metadata file");
++            std::vector<u8> bytes(size);
++            if (npdm->Read(bytes.data(), bytes.size(), 0) != size)
++                throw std::runtime_error("Short strict research NPDM snapshot read");
++            auto snapshot = std::make_shared<ImmutableNpdmFile>(std::move(bytes));
++            FileSys::ProgramMetadata metadata;
++            if (metadata.Load(snapshot) != Loader::ResultStatus::Success)
++                throw std::runtime_error("Actual strict research NPDM parser rejected the input");
++            state->strict_program_id = metadata.GetTitleID();
++            state->strict_target_verified = SelectStrictMemoryProfile(
++                true, true, metadata.GetTitleID(), metadata.Is64BitProgram(),
++                metadata.GetAddressSpaceType() == FileSys::ProgramAddressSpaceType::Is39Bit,
++                metadata.GetPoolPartition() == FileSys::PoolPartition::Application);
++            auto metadata_directory = std::make_shared<FileSys::VectorVfsDirectory>(
++                std::vector<FileSys::VirtualFile>{snapshot}, std::vector<FileSys::VirtualDir>{},
++                original->GetName(), original->GetParentDirectory());
++            state->inputs.exefs = FileSys::LayeredVfsDirectory::MakeLayeredDirectory(
++                {metadata_directory, original}, original->GetName());
++        }
+         state->entry = (descriptor.exefs / "main").lexically_normal();
+         state->prepared = true;
+         std::fprintf(stderr, "PROSPERO_RESEARCH stage=prepared mode=%s modules=%zu guest_execution=not_started\n",
+@@ -93,12 +135,12 @@
+     }
+ }
+ 
+-FactoryLease ResearchRoute::InstallFactory(Core::System& expected_system) const {
++FactoryLease ResearchRoute::InstallFactory(Core::System& expected_system, StrictMemoryAbortLease* strict_memory) const {
+     if (!state->prepared) throw std::runtime_error("Research input was not prepared");
+     const auto owned = state;
+     const auto acquisition = std::make_shared<FactoryAcquisitionGate>(&expected_system);
+     return FactoryLease(Loader::InstallDevelopmentFactory(
+-        [owned, acquisition](Core::System& system, FileSys::VirtualFile file, u64 program_id, size_t program_index)
++        [owned, acquisition, strict_memory](Core::System& system, FileSys::VirtualFile file, u64 program_id, size_t program_index)
+             -> std::unique_ptr<Loader::AppLoader> {
+             const bool exact = file && file->GetName() == "main" &&
+                 std::filesystem::path(file->GetFullPath()).lexically_normal() == owned->entry;
+@@ -106,7 +148,21 @@
+                 FactoryAcquisitionGate::Decision::Ignore) return {};
+             ++owned->matches;
+             std::fprintf(stderr, "PROSPERO_RESEARCH stage=exact_factory_match guest_execution=not_started\n");
+-            return CreateDirectDevelopmentLoader(owned->inputs);
++            auto loader = CreateDirectDevelopmentLoader(owned->inputs);
++            if (owned->strict_target_verified) {
++                u64 actual_program_id = 0;
++                if (!loader || loader->ReadProgramId(actual_program_id) != Loader::ResultStatus::Success ||
++                    actual_program_id != owned->strict_program_id)
++                    throw std::runtime_error("Strict research loader metadata identity mismatch");
++                if (!strict_memory)
++                    throw std::runtime_error("Strict execution requires its scoped CPU setting lease");
++                // The exact immutable metadata has been parsed by the real loader;
++                // no process/JIT exists yet. This lease outlives Core teardown.
++                strict_memory->Activate();
++                std::fprintf(stderr, "NATIVE_RESEARCH strict_memory_aborts=1 ignore_memory_aborts=0 program_id=%016llx\n",
++                             static_cast<unsigned long long>(actual_program_id));
++            }
++            return loader;
+         }));
+ }
+ 
+--- a/headless/research/direct-loader-prototype/research_frontend.h
++++ b/headless/research/direct-loader-prototype/research_frontend.h
+@@ -2,6 +2,8 @@
+ #pragma once
+ #include "development_input.h"
+ #include "research_descriptor.h"
++#include "research_profile_lease.h"
++#include "research_cpu_setting_lease.h"
+ 
+ namespace Prospero::Development {
+ class FactoryLease {
+@@ -28,9 +30,13 @@
+     bool Invalid() const;
+     const std::string& Error() const;
+     ResearchMode Mode() const;
++    bool PAuthDisabledProfile() const;
++    bool RemoteRegionProfile() const;
++    bool VerifiedExtendedMemoryProfile() const;
++    bool StrictMemoryAbortsRequested() const;
+     // Consumes the one research request; failure never substitutes another ROM.
+     std::string TakeEntryPoint();
+-    FactoryLease InstallFactory(Core::System& expected_system) const;
++    FactoryLease InstallFactory(Core::System& expected_system, StrictMemoryAbortLease* strict_memory = nullptr) const;
+     ResearchLoadResult PerformLoadOnly() const;
+     void CheckExecuteEnabled() const;
+ private:
+--- /dev/null
++++ b/headless/research/direct-loader-prototype/research_npdm_snapshot.h
+@@ -0,0 +1,31 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++#pragma once
++#include <algorithm>
++#include <cstring>
++#include <vector>
++#include <utility>
++#include "core/file_sys/vfs/vfs.h"
++namespace Prospero::Development {
++// Stable identical NPDM bytes for all real loader reloads in a strict execution.
++// The source file is never edited and NSO/RomFS data remains in the real VFS.
++class ImmutableNpdmFile final : public FileSys::VfsFile {
++public:
++    explicit ImmutableNpdmFile(std::vector<u8> bytes) : bytes(std::move(bytes)) {}
++    std::string GetName() const override { return "main.npdm"; }
++    std::size_t GetSize() const override { return bytes.size(); }
++    bool Resize(std::size_t) override { return false; }
++    FileSys::VirtualDir GetContainingDirectory() const override { return {}; }
++    bool IsWritable() const override { return false; }
++    bool IsReadable() const override { return true; }
++    std::size_t Read(u8* output, std::size_t length, std::size_t offset) const override {
++        if (length == 0 || offset >= bytes.size()) return 0;
++        const auto count = std::min(length, bytes.size() - offset);
++        std::memcpy(output, bytes.data() + offset, count);
++        return count;
++    }
++    std::size_t Write(const u8*, std::size_t, std::size_t) override { return 0; }
++    bool Rename(std::string_view) override { return false; }
++private:
++    const std::vector<u8> bytes;
++};
++} // namespace Prospero::Development
+--- /dev/null
++++ b/headless/research/direct-loader-prototype/research_profile_lease.h
+@@ -0,0 +1,93 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++#pragma once
++
++#include <array>
++#include <cerrno>
++#include <cstdio>
++#include <cstdlib>
++#include <optional>
++#include <stdexcept>
++#include <string>
++
++namespace Prospero::Development {
++
++// This lease belongs to one complete frontend load/teardown scope. Ordinary
++// launches also acquire it, with active=false, so inherited selectors cannot
++// activate a profile while any ordinary guest or its JITs are alive.
++class ResearchProfileLease final {
++public:
++    ResearchProfileLease(bool active, bool pauth, bool remote, bool strict_memory_aborts = false) {
++#if !defined(PROSPERO_NATIVE_STARTUP_RESEARCH) || !PROSPERO_NATIVE_STARTUP_RESEARCH
++        if (pauth || remote || strict_memory_aborts) {
++            throw std::runtime_error("Native startup research profiles are disabled in this build");
++        }
++#endif
++        (void)strict_memory_aborts;
++        // getenv storage can be invalidated by the first setenv. Complete all
++        // potentially throwing copies before mutating any environment variable.
++        for (std::size_t i = 0; i < Names.size(); ++i) {
++            if (const char* value = std::getenv(Names[i])) previous[i] = std::string(value);
++        }
++        try {
++            Set(Names[0], "0");
++            Set(Names[1], active && pauth ? "1" : "0");
++            Set(Names[2], active && remote ? "1" : "0");
++#if defined(PROSPERO_NATIVE_STARTUP_RESEARCH) && PROSPERO_NATIVE_STARTUP_RESEARCH
++            if (active) Set(Names[0], "1");
++#endif
++            installed = true;
++        } catch (...) {
++            RestoreOrAbort();
++            throw;
++        }
++    }
++
++    ~ResearchProfileLease() noexcept {
++        if (installed) RestoreOrAbort();
++    }
++
++    ResearchProfileLease(const ResearchProfileLease&) = delete;
++    ResearchProfileLease& operator=(const ResearchProfileLease&) = delete;
++    ResearchProfileLease(ResearchProfileLease&&) = delete;
++    ResearchProfileLease& operator=(ResearchProfileLease&&) = delete;
++
++private:
++    inline static constexpr std::array<const char*, 3> Names{
++        "PROSPERO_RESEARCH_NATIVE_ROUTE_ACTIVE",
++        "PROSPERO_RESEARCH_PAUTH_DISABLED_PROFILE",
++        "PROSPERO_RESEARCH_REMOTE_REGION_PROFILE",
++    };
++    std::array<std::optional<std::string>, 3> previous{};
++    bool installed = false;
++
++    static void Set(const char* name, const char* value) {
++        if (::setenv(name, value, 1) != 0) {
++            throw std::runtime_error(std::string("Cannot install native research selector: ") + name);
++        }
++    }
++
++    [[noreturn]] static void RestoreFailed(const char* name) noexcept {
++        const int error = errno;
++        std::fprintf(stderr, "PROSPERO_RESEARCH profile_restore_failed selector=%s errno=%d action=abort\n",
++                     name, error);
++        std::fflush(stderr);
++        std::abort();
++    }
++
++    void RestoreOne(std::size_t i) noexcept {
++        const int result = previous[i] ? ::setenv(Names[i], previous[i]->c_str(), 1)
++                                       : ::unsetenv(Names[i]);
++        if (result != 0) RestoreFailed(Names[i]);
++    }
++
++    void RestoreOrAbort() noexcept {
++        // Never expose partially restored profile values under an active route.
++        if (::setenv(Names[0], "0", 1) != 0) RestoreFailed(Names[0]);
++        RestoreOne(1);
++        RestoreOne(2);
++        RestoreOne(0);
++        installed = false;
++    }
++};
++
++} // namespace Prospero::Development--- a/headless/settings_store.h
++++ b/headless/settings_store.h
+@@ -41,6 +41,7 @@
+ // text files of earlier versions (settings.txt, last-game.txt, recent-games.txt, assets-dir.txt,
+ // game-<title>-mode.txt) are read once into the JSON file and left in place.
+ #pragma once
++#include "folder_game_entry.h"
+ #include "hud.h"
+ #include <algorithm>
+ #include <array>
+@@ -200,7 +201,7 @@
+     }
+     std::string extension(name.substr(name.size() - 4));
+     for (char& c : extension) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+-    return extension == ".nsp" || extension == ".xci";
++    return extension == ".nsp" || extension == ".xci" || IsFolderGameEntry(name);
+ }
+ 
+ // A wallpaper's file name: the name alone (the image lives in the wallpapers folder), readable
+--- a/tools/build-headless-native.sh
++++ b/tools/build-headless-native.sh
+@@ -45,6 +45,7 @@
+     -DPROSPERO_ENABLE_COMPOUND="${PROSPERO_ENABLE_COMPOUND:-ON}" \
+     -DPROSPERO_DIRECT_FRONTEND_ROUTE="${PROSPERO_DIRECT_FRONTEND_ROUTE:-OFF}" \
+     -DPROSPERO_DIRECT_ALLOW_EXECUTE="${PROSPERO_DIRECT_ALLOW_EXECUTE:-OFF}" \
++    -DPROSPERO_NATIVE_STARTUP_RESEARCH="${PROSPERO_NATIVE_STARTUP_RESEARCH:-OFF}" \
+     -DEDEN_PS5_VULKAN="${EDEN_PS5_VULKAN:-OFF}" \
+     -DEDEN_VULKAN_DRIVER="${EDEN_VULKAN_DRIVER:-CUSTOM}" \
+     -DEDEN_DEV_VULKAN="${EDEN_DEV_VULKAN:-OFF}" \
+--- a/tools/prepare-build.sh
++++ b/tools/prepare-build.sh
+@@ -41,6 +41,11 @@
+ # reverses cleanly is already in the tree. One that neither reverses nor applies was changed after
+ # an earlier version of it went in: the files it touches come back from the pinned archive first.
+ command -v patch >/dev/null || { echo "patch is required (apt install patch)" >&2; exit 1; }
++if [[ -f tools/native-startup-research/manifest.json ]]; then
++    # Reviewed source-only bundle owns the complete pinned-to-final delta. Unknown
++    # source bytes fail closed; never reset an overlapping file to the archive.
++    python3 tools/native-startup-research/replay_native.py --source "$eden" --port "$root" --scope eden --apply
++else
+ for eden_patch in tools/eden-patches/*.diff; do
+     if patch -d "$eden" -p1 -R --dry-run -s -f < "$eden_patch" >/dev/null 2>&1; then continue; fi
+     step "Eden patch $(basename "$eden_patch")"
+@@ -50,6 +55,8 @@
+     fi
+     patch -d "$eden" -p1 -N -s < "$eden_patch" || { echo "$eden_patch does not apply to Eden's source" >&2; exit 1; }
+ done
++fi
++
+ # Optional: seed Eden's package cache from another checkout's (CI reuses a development cache).
+ if [[ -n ${EDEN_CPM_CACHE_SEED:-} && ! -d $eden/.cache/cpm ]]; then
+     step "Eden package cache from $EDEN_CPM_CACHE_SEED"

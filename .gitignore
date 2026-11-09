@@ -1,0 +1,15 @@
+.deps/
+build/
+dist/
+results/
+.local/
+__pycache__/
+
+# coordination/: run output, saves and built tools stay local
+coordination/runs/
+coordination/save-backups/
+coordination/**/*.so
+coordination/pmc/*
+!coordination/pmc/*.c
+!coordination/pmc/*.py
+__pycache__/

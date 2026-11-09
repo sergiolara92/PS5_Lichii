@@ -1,0 +1,98 @@
+Vulkan staging buffers: out of device memory, StagingBufferPool::CreateBufferOrRecover frees every
+staging buffer the GPU is done with and tries again, then once more after waiting for the GPU.
+Two race sessions ended at a course load (VK_ERROR_OUT_OF_DEVICE_MEMORY thrown from a texture
+upload's staging buffer, largest free block 6-8 MiB): the error ended the app.
+--- a/src/video_core/renderer_vulkan/vk_staging_buffer_pool.cpp
++++ b/src/video_core/renderer_vulkan/vk_staging_buffer_pool.cpp
+@@ -246,27 +246,7 @@
+     if (device.IsBufferDeviceAddressSupported()) {
+         buffer_ci.usage |= VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+     }
+-    vk::Buffer buffer;
+-    try {
+-        buffer = memory_allocator.CreateBuffer(buffer_ci, usage);
+-    } catch (const vk::Exception& e) {
+-        // Out of memory: free every idle staging buffer and try once more.
+-        size_t freed = 0;
+-        for (StagingBuffersCache* cache : {&device_local_cache, &upload_cache, &download_cache}) {
+-            for (StagingBuffers& level : *cache) {
+-                const size_t before = level.entries.size();
+-                std::erase_if(level.entries, [this](const StagingBuffer& entry) {
+-                    return !entry.deferred && scheduler.IsFree(entry.tick);
+-                });
+-                freed += before - level.entries.size();
+-                level.iterate_index = 0;
+-                level.delete_index = 0;
+-            }
+-        }
+-        LOG_WARNING(Render_Vulkan, "Staging buffer of {} MiB could not be made ({}); freed {} idle "
+-                    "staging buffers and retrying", buffer_ci.size >> 20, e.what(), freed);
+-        buffer = memory_allocator.CreateBuffer(buffer_ci, usage);
+-    }
++    vk::Buffer buffer = CreateBufferOrRecover(buffer_ci, usage);
+     VideoCommon::Churn::Add(VideoCommon::Churn::StagingBuffers);
+     VideoCommon::Churn::Add(VideoCommon::Churn::StagingBytes, buffer_ci.size);
+     if (device.HasDebuggingToolAttached()) {
+@@ -291,6 +271,42 @@
+     return entry.Ref();
+ }
+ 
++// Out of device memory (a course load filling memory the CPU and GPU share): give back every
++// staging buffer the GPU is done with and try again, then once more after waiting for the GPU, so
++// the ones still in flight are done too. Unhandled, the error ended the app.
++vk::Buffer StagingBufferPool::CreateBufferOrRecover(const VkBufferCreateInfo& buffer_ci, MemoryUsage usage) {
++    for (int attempt = 0;; ++attempt) {
++        try {
++            return memory_allocator.CreateBuffer(buffer_ci, usage);
++        } catch (const vk::Exception& exception) {
++            if (attempt == 2 || (exception.GetResult() != VK_ERROR_OUT_OF_DEVICE_MEMORY &&
++                                 exception.GetResult() != VK_ERROR_OUT_OF_HOST_MEMORY)) {
++                throw;
++            }
++            LOG_WARNING(Render_Vulkan, "Staging buffer of {} bytes: out of memory, freeing idle staging buffers{}",
++                        buffer_ci.size, attempt == 1 ? " after waiting for the GPU" : "");
++            if (attempt == 1) {
++                scheduler.Finish();
++            }
++            ReleaseIdle();
++        }
++    }
++}
++
++// Every staging buffer the GPU is done with goes back to the driver (out of device memory: here and
++// the allocator's recovery, through the texture cache runtime).
++void StagingBufferPool::ReleaseIdle() {
++    for (auto* cache : {&device_local_cache, &upload_cache, &download_cache}) {
++        for (auto& level : *cache) {
++            std::erase_if(level.entries, [this](const StagingBuffer& entry) {
++                return !entry.deferred && scheduler.IsFree(entry.tick);
++            });
++            level.delete_index = 0;
++            level.iterate_index = 0;
++        }
++    }
++}
++
+ StagingBufferPool::StagingBuffersCache& StagingBufferPool::GetCache(MemoryUsage usage) {
+     switch (usage) {
+     case MemoryUsage::DeviceLocal:
+--- a/src/video_core/renderer_vulkan/vk_staging_buffer_pool.h
++++ b/src/video_core/renderer_vulkan/vk_staging_buffer_pool.h
+@@ -46,6 +46,9 @@
+ 
+     void TickFrame();
+ 
++    /// Gives back every staging buffer the GPU is done with (out of device memory).
++    void ReleaseIdle();
++
+ private:
+     struct StreamBufferCommit {
+         size_t upper_bound;
+@@ -93,6 +96,7 @@
+     std::optional<StagingBufferRef> TryGetReservedBuffer(size_t size, MemoryUsage usage,
+                                                          bool deferred);
+ 
++    vk::Buffer CreateBufferOrRecover(const VkBufferCreateInfo& buffer_ci, MemoryUsage usage);
+     StagingBufferRef CreateStagingBuffer(size_t size, MemoryUsage usage, bool deferred);
+ 
+     StagingBuffersCache& GetCache(MemoryUsage usage);

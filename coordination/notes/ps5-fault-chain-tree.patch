@@ -1,0 +1,139 @@
+diff -ruN a/tests/test_ps5_fault_chain.c b/tests/test_ps5_fault_chain.c
+--- a/tests/test_ps5_fault_chain.c	1969-12-31 19:00:00.000000000 -0500
++++ b/tests/test_ps5_fault_chain.c	2026-11-01 07:15:20.459422506 -0500
+@@ -0,0 +1,112 @@
++/* SPDX-License-Identifier: GPL-3.0-or-later */
++/* dlls/ntdll/ps5_fault_chain.h: the WINE_PS5_FAULT_CHAIN grammar, and a walk that stops at the first unreadable hop. */
++#include "../.deps/wine-ps5/source/dlls/ntdll/ps5_fault_chain.h"
++#include <assert.h>
++#include <stdint.h>
++#include <stdio.h>
++#include <string.h>
++
++static unsigned char memory[0x1000];
++static uint64_t base;   /* set in main() from the array's address */
++
++static int fake_read( void *ctx, uint64_t address, unsigned int width, uint64_t *value )
++{
++    unsigned int i;
++
++    (void)ctx;
++    if (width != 1 && width != 4 && width != 8) return 0;
++    if (address < base || address + width > base + sizeof(memory)) return 0;
++    *value = 0;
++    for (i = 0; i < width; i++) *value |= (uint64_t)memory[address - base + i] << (8 * i);
++    return 1;
++}
++
++static void put64( uint64_t at, uint64_t value ) { memcpy( memory + at, &value, 8 ); }
++static void put32( uint64_t at, uint32_t value ) { memcpy( memory + at, &value, 4 ); }
++
++static void rejects( const char *spec )
++{
++    struct ps5_fault_chain chain;
++    const char *bad;
++
++    bad = "not set";
++    if (ps5_fault_chain_parse( spec, &chain, &bad ))
++    {
++        fprintf( stderr, "accepted a bad spec: \"%s\"\n", spec );
++        assert( 0 );
++    }
++    assert( bad >= spec );
++}
++
++int main(void)
++{
++    struct ps5_fault_chain chain;
++    const char *bad;
++    char line[1024], tiny[8];
++
++    base = (uint64_t)(uintptr_t)memory;
++
++    /* the spec this was written for, and what each token means */
++    assert( ps5_fault_chain_parse( "rdi+0xe0;+0x158;u32:+0;u8:+4;u64:+0x10;u64:+0x30", &chain, &bad ) );
++    assert( !strcmp( chain.reg, "rdi" ) );
++    assert( chain.start_off == 0xe0 );
++    assert( chain.count == 5 );
++    assert( chain.steps[0].kind == PS5_FAULT_STEP_DEREF && chain.steps[0].off == 0x158 );
++    assert( chain.steps[1].kind == PS5_FAULT_STEP_U32   && chain.steps[1].off == 0 );
++    assert( chain.steps[2].kind == PS5_FAULT_STEP_U8    && chain.steps[2].off == 4 );
++    assert( chain.steps[3].kind == PS5_FAULT_STEP_U64   && chain.steps[3].off == 0x10 );
++    assert( chain.steps[4].kind == PS5_FAULT_STEP_U64   && chain.steps[4].off == 0x30 );
++
++    /* exactly PS5_FAULT_CHAIN_MAX steps is full, not over */
++    assert( ps5_fault_chain_parse( "rdi;+0x1;+0x2;+0x3;+0x4;+0x5;+0x6;+0x7;+0x8", &chain, &bad ) );
++    assert( chain.count == PS5_FAULT_CHAIN_MAX );
++
++    /* a register alone is a chain of nothing; negative offsets and decimal are allowed */
++    assert( ps5_fault_chain_parse( "r15", &chain, &bad ) );
++    assert( !strcmp( chain.reg, "r15" ) && chain.count == 0 && chain.start_off == 0 );
++    assert( ps5_fault_chain_parse( "rbp-16;+0", &chain, &bad ) );
++    assert( chain.start_off == -16 && chain.count == 1 );
++
++    rejects( "" );
++    rejects( " " );
++    rejects( "+0x10" );            /* no register */
++    rejects( "rdi+" );             /* sign, no digits */
++    rejects( "rdi+0x" );
++    rejects( "rdi+0xe0;" );        /* a step that is not there */
++    rejects( "rdi+0xe0;x" );
++    rejects( "rdi+0xe0;0x10" );    /* a step without a sign */
++    rejects( "rdi+0xe0;u16:+0" );  /* no such width */
++    rejects( "rdi+0xe0;+0x158junk" );
++    rejects( "rdi+0xe0;+0x1;+0x2;+0x3;+0x4;+0x5;+0x6;+0x7;+0x8;+0x9" );   /* one past PS5_FAULT_CHAIN_MAX */
++    rejects( "RDI+0xe0" );         /* register names are lower case */
++
++    /* a walk over a two-level pointer, then four reads at the far end */
++    put64( 0x100, base + 0x200 );
++    put64( 0x200, base + 0x300 );
++    put32( 0x300, 0xdeadbeef );
++    memory[0x304] = 0x5a;
++    put64( 0x310, 0x0011223344556677ULL );
++    put64( 0x330, 0 );
++
++    assert( ps5_fault_chain_parse( "rdi+0x100;+0x0;+0x0;u32:+0;u8:+4;u64:+0x10;u64:+0x30", &chain, &bad ) );
++    assert( ps5_fault_chain_walk( &chain, base, fake_read, NULL, line, sizeof(line) ) == 6 );
++    assert( strstr( line, ";u32+0x0=0xdeadbeef" ) );
++    assert( strstr( line, ";u8+0x4=0x5a" ) );
++    assert( strstr( line, ";u64+0x10=0x0011223344556677" ) );
++    assert( strstr( line, ";u64+0x30=0x0000000000000000" ) );
++    printf( "walk: %s\n", line );
++
++    /* an unreadable hop is named and ends the walk; it never faults */
++    put64( 0x400, 0x10 );
++    assert( ps5_fault_chain_parse( "rdi+0x400;+0x0;u64:+0", &chain, &bad ) );
++    assert( ps5_fault_chain_walk( &chain, base, fake_read, NULL, line, sizeof(line) ) == 2 );
++    assert( strstr( line, "<unreadable>" ) );
++
++    /* a buffer too small to hold the line is truncated, not overrun */
++    assert( ps5_fault_chain_parse( "rdi+0x100;+0x0;+0x0;u32:+0;u8:+4", &chain, &bad ) );
++    assert( ps5_fault_chain_walk( &chain, base, fake_read, NULL, tiny, sizeof(tiny) ) == 4 );
++    assert( strlen( tiny ) == sizeof(tiny) - 1 );
++
++    printf( "test_ps5_fault_chain: ok\n" );
++    return 0;
++}
+diff -ruN a/tools/host-tests.sh b/tools/host-tests.sh
+--- a/tools/host-tests.sh	2026-11-01 07:14:57.297191065 -0500
++++ b/tools/host-tests.sh	2026-11-01 07:15:20.458422496 -0500
+@@ -160,6 +160,7 @@
+         wine/ps5/pw_wine_pages.c wine/ps5/pw_wine_pages_ps5.c wine/ps5/pw_wine_vm.c wine/ps5/pw_wine_prx.c wine/ps5/pw_wine_alias.c
+         wine/ps5/pw_wine_mmu4k_ps5.c wine/ps5/pw_wine_mmu4k.c wine/ps5/pw_wine_mmu4k_slot.S src/pw_ia32_isa.c src/pw_ia32_decode.c
+         wine/ps5/pw_wine_perf.c wine/ps5/pw_wine_codeshare.c wine/ps5/pw_wine_code_budget.c .deps/graphics-foundation/tooling/gpu-broker/client.c"
++    [test_ps5_fault_chain]=".deps/wine-ps5/source/dlls/ntdll/ps5_fault_chain.c"
+ )
+ # Extra compiler flags: the resolver's names are prefixed so the test reaches it, not glibc's.
+ declare -A flags=(
+@@ -209,6 +210,11 @@
+         continue
+     fi
+     [[ -v sources[$name] ]] || { echo "$name: no entry in tools/host-tests.sh" >&2; exit 1; }
++    if [[ $name == test_ps5_fault_chain ]]; then
++        # reads the tree build-wine-ps5.sh applied; skip until the ntdll patch is in the series.
++        [[ -f $root/.deps/wine-ps5/source/dlls/ntdll/ps5_fault_chain.c ]] || \
++            { echo "$name: skipped (Wine patch not applied; run tools/build-wine-ps5.sh)"; continue; }
++    fi
+     if [[ $name == test_wine_fault_served ]]; then
+         # shortcut: reads the tree the last build-wine-ps5.sh applied, not the patch series; build after editing 1127.
+         virtual=$root/.deps/wine-ps5/source/dlls/ntdll/unix/virtual.c

@@ -1,0 +1,88 @@
+A compute translation rebuilt because a null pointer slot now holds a buffer (StaleNullPointerSlot)
+compiles on a worker; the working translation keeps running until the rebuild is built, instead of
+the dispatch waiting for the driver compile (every GPU channel waited with it: 2-3.4 s freezes in
+OOT's Hyrule Field). Ported from Nolar-Hack/Lichii 648ac12b7 (the used field it carries is not in
+this base).
+
+diff --color -ru a/src/video_core/renderer_vulkan/vk_compute_pipeline.h b/src/video_core/renderer_vulkan/vk_compute_pipeline.h
+--- a/src/video_core/renderer_vulkan/vk_compute_pipeline.h
++++ b/src/video_core/renderer_vulkan/vk_compute_pipeline.h
+@@ -101,6 +101,11 @@
+         return precompiled;
+     }
+     /// Whether the build ended without a pipeline (its module could not be made).
++    /// Whether the driver build has finished (or failed: then IsBound is false)
++    [[nodiscard]] bool IsBuilt() const noexcept {
++        return is_built.load(std::memory_order::acquire);
++    }
++
+     [[nodiscard]] bool BuildFailed() const noexcept {
+         return is_built.load(std::memory_order::acquire) && !pipeline;
+     }
+diff --color -ru a/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp b/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
+--- a/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
++++ b/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
+@@ -2315,8 +2315,32 @@
+     };
+     const auto [pair, is_new]{compute_cache.try_emplace(key)};
+     auto& entry{pair->second};
++    const auto replace = [&](ComputePipelineCacheEntry&& rebuilt) {
++        if (entry.pipeline) {
++            retired_compute_pipelines.emplace_back(scheduler.CurrentTick(),
++                                                   std::move(entry.pipeline));
++        }
++        rebuilt.rebuilds = entry.rebuilds + 1;
++        entry = std::move(rebuilt);
++    };
+     if (is_new) {
+         entry = CreateComputePipeline(key, shader);
++    } else if (entry.pending_rebuild) {
++        // From Nolar-Hack/Lichii 648ac12b7: the rebuild below compiles on a worker; the working
++        // translation runs until it is done (OOT's Hyrule Field froze 2-3.4 s per rebuild).
++        if (entry.pending_rebuild->pipeline->IsBuilt()) {
++            auto rebuilt{std::move(*entry.pending_rebuild)};
++            entry.pending_rebuild.reset();
++            if (rebuilt.pipeline->IsBound()) {
++                replace(std::move(rebuilt));
++            } else {
++                LOG_WARNING(Render_Vulkan, "Keeping compute shader {:016x}: rebuild failed to compile",
++                            key.unique_hash);
++                retired_compute_pipelines.emplace_back(scheduler.CurrentTick(),
++                                                       std::move(rebuilt.pipeline));
++                entry.rebuilds = MaxComputeRebuilds;
++            }
++        }
+     } else if (entry.pipeline && entry.pipeline->IsPrecompiled() && entry.pipeline->BuildFailed()) {
+         // EDEN_NX2_PRECOMPILED_FAST: its kept SPIR-V did not build. Translated from the game's
+         // state instead, from now on.
+@@ -2332,13 +2356,10 @@
+         // the game fills depends on the area, so the new one keeps binding every pointer this one
+         // binds, null now or not: a null pointer binds nothing.
+         auto rebuilt{CreateComputePipeline(key, shader, entry.mapped_pointers)};
+-        if (rebuilt.pipeline) {
+-            if (entry.pipeline) {
+-                retired_compute_pipelines.emplace_back(scheduler.CurrentTick(),
+-                                                       std::move(entry.pipeline));
+-            }
+-            rebuilt.rebuilds = entry.rebuilds + 1;
+-            entry = std::move(rebuilt);
++        if (rebuilt.pipeline && entry.pipeline && !rebuilt.pipeline->IsBuilt()) {
++            entry.pending_rebuild = std::make_unique<ComputePipelineCacheEntry>(std::move(rebuilt));
++        } else if (rebuilt.pipeline) {
++            replace(std::move(rebuilt));
+         } else {
+             // Keep the working translation when the new one cannot be built (for example a
+             // narrow access that now stays global across two buffers), and stop retrying.
+diff --color -ru a/src/video_core/renderer_vulkan/vk_pipeline_cache.h b/src/video_core/renderer_vulkan/vk_pipeline_cache.h
+--- a/src/video_core/renderer_vulkan/vk_pipeline_cache.h
++++ b/src/video_core/renderer_vulkan/vk_pipeline_cache.h
+@@ -126,6 +126,9 @@
+     /// Constant buffer slots bound as storage buffer pointers (see MappedStoragePointerKeys)
+     std::vector<u64> mapped_pointers;
+     u32 rebuilds{};
++    /// A rebuild whose driver compile runs on a worker; this entry's pipeline is used until it is
++    /// built (a compile waited on by the dispatch stalled every GPU channel for 2-3 s)
++    std::unique_ptr<ComputePipelineCacheEntry> pending_rebuild;
+ 
+     [[nodiscard]] ComputePipeline* Get(bool native, GPUVAddr address,
+                                        const ComputePipelineCacheKey& key) const;

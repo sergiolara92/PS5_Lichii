@@ -1,0 +1,8 @@
+Adapter source: SPDX-License-Identifier GPL-3.0-or-later.
+Eden/yuzu interfaces retain their original GPL-2.0-or-later / GPL-3.0-or-later
+notices. The supplied Eden license is retained in licenses/Eden-LICENSE.
+This isolated native integration links the existing prosperoeden-miniz target.
+It uses the exact baseline miniz3.0.2 source/header version without adding
+another miniz implementation. Original miniz license and source provenance
+are retained in licenses/miniz-LICENSE and licenses/miniz-SOURCE.json.
+The standalone prototype and its tests remain outside this staged source tree.

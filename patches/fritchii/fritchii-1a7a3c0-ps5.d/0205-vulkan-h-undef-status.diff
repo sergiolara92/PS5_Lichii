@@ -1,0 +1,13 @@
+vulkan.h: Xlib's Status macro is undefined with the others it sanitizes; Fritchii's pipeline cache merge names a
+type Status, which did not compile on Linux (Fritchii builds for Windows only).
+
+--- a/src/video_core/vulkan_common/vulkan.h
++++ b/src/video_core/vulkan_common/vulkan.h
+@@ -36,6 +36,7 @@
+ #undef Always
+ #undef False
+ #undef None
++#undef Status // Xlib's (int); vk_pipeline_cache.cpp names a type Status
+ #undef True
+ 
+ // "Catch-all" handle for both Android and.. the rest of platforms

@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "enabled": false,
+  "mode": "load-only",
+  "exefs": "/data/prosperoeden/roms/mariokartworldgame/base/exefs",
+  "romfs": {
+    "kind": "loose",
+    "path": "/data/prosperoeden/roms/mariokartworldgame/base/romfs"
+  },
+  "required_modules": ["rtld", "main", "subsdk0", "sdk"],
+  "profiles": {
+    "pauth_disabled": false,
+    "remote_region": false
+  }
+}

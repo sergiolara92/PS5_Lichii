@@ -1,0 +1,820 @@
+--- a/src/dynarmic/src/dynarmic/frontend/A64/decoder/a64.inc
++++ b/src/dynarmic/src/dynarmic/frontend/A64/decoder/a64.inc
+@@ -109,6 +109,16 @@
+ INST(SWP64Orders, "SWP64Orders checked full-barrier", "11111000AR1sssss100000nnnnnttttt")
+ INST(LDEOR32Orders, "LDEOR32Orders checked full-barrier", "10111000AR1sssss001000nnnnnttttt")
+ INST(SWP32Orders, "SWP32Orders checked full-barrier", "10111000AR1sssss100000nnnnnttttt")
++INST(LDADD8Orders, "LDADD narrow checked all orders", "00111000AR1sssss000000nnnnnttttt")
++INST(LDCLR8Orders, "LDCLR narrow checked all orders", "00111000AR1sssss000100nnnnnttttt")
++INST(LDSET8Orders, "LDSET narrow checked all orders", "00111000AR1sssss001100nnnnnttttt")
++INST(LDEOR8Orders, "LDEOR narrow checked all orders", "00111000AR1sssss001000nnnnnttttt")
++INST(SWP8Orders, "SWP narrow checked all orders", "00111000AR1sssss100000nnnnnttttt")
++INST(LDADD16Orders, "LDADD narrow checked all orders", "01111000AR1sssss000000nnnnnttttt")
++INST(LDCLR16Orders, "LDCLR narrow checked all orders", "01111000AR1sssss000100nnnnnttttt")
++INST(LDSET16Orders, "LDSET narrow checked all orders", "01111000AR1sssss001100nnnnnttttt")
++INST(LDEOR16Orders, "LDEOR narrow checked all orders", "01111000AR1sssss001000nnnnnttttt")
++INST(SWP16Orders, "SWP narrow checked all orders", "01111000AR1sssss100000nnnnnttttt")
+ INST(LDADD32Orders, "LDADD, LDADDA, LDADDL, LDADDAL (32-bit)", "10111000AR1sssss000000nnnnnttttt")
+ INST(CAS64Orders, "CAS, CASA, CASL, CASAL (64-bit)", "110010001L1sssssO11111nnnnnttttt")
+ INST(CAS8Orders, "CAS byte/halfword checked all orders", "000010001L1sssssO11111nnnnnttttt")
+--- a/src/dynarmic/src/dynarmic/frontend/A64/translate/impl/impl.h
++++ b/src/dynarmic/src/dynarmic/frontend/A64/translate/impl/impl.h
+@@ -249,6 +249,16 @@
+     bool SWP64Orders(bool acquire, bool release, Reg Rs, Reg Rn, Reg Rt);
+     bool LDEOR32Orders(bool acquire, bool release, Reg Rs, Reg Rn, Reg Rt);
+     bool SWP32Orders(bool acquire, bool release, Reg Rs, Reg Rn, Reg Rt);
++    bool LDADD8Orders(bool acquire, bool release, Reg Rs, Reg Rn, Reg Rt);
++    bool LDCLR8Orders(bool acquire, bool release, Reg Rs, Reg Rn, Reg Rt);
++    bool LDSET8Orders(bool acquire, bool release, Reg Rs, Reg Rn, Reg Rt);
++    bool LDEOR8Orders(bool acquire, bool release, Reg Rs, Reg Rn, Reg Rt);
++    bool SWP8Orders(bool acquire, bool release, Reg Rs, Reg Rn, Reg Rt);
++    bool LDADD16Orders(bool acquire, bool release, Reg Rs, Reg Rn, Reg Rt);
++    bool LDCLR16Orders(bool acquire, bool release, Reg Rs, Reg Rn, Reg Rt);
++    bool LDSET16Orders(bool acquire, bool release, Reg Rs, Reg Rn, Reg Rt);
++    bool LDEOR16Orders(bool acquire, bool release, Reg Rs, Reg Rn, Reg Rt);
++    bool SWP16Orders(bool acquire, bool release, Reg Rs, Reg Rn, Reg Rt);
+     bool LDADD32Orders(bool acquire, bool release, Reg Rs, Reg Rn, Reg Rt);
+     bool CAS64Orders(bool acquire, Reg Rs, bool release, Reg Rn, Reg Rt);
+     bool CAS8Orders(bool acquire, Reg Rs, bool release, Reg Rn, Reg Rt);
+--- a/src/dynarmic/src/dynarmic/frontend/A64/translate/impl/load_store_exclusive.cpp
++++ b/src/dynarmic/src/dynarmic/frontend/A64/translate/impl/load_store_exclusive.cpp
+@@ -77,6 +77,106 @@
+     else address = X(64, Rn);
+     const IR::U32 operand = X(32, Rs); // Capture before a possibly aliased Rt write.
+     const IR::U32 observed = ir.AtomicFetchAdd32(address, operand);
++    X(32, Rt, observed);
++    return true;
++}
++
++bool TranslatorVisitor::SWP16Orders(bool /*acquire*/, bool /*release*/, Reg Rs, Reg Rn, Reg Rt) {
++    IR::U64 address;
++    if (Rn == Reg::SP) address = SP(64);
++    else address = X(64, Rn);
++    const IR::U32 operand = X(32, Rs); // Capture before a possibly aliased Rt write.
++    const IR::U32 observed = ir.AtomicExchange16(address, operand);
++    X(32, Rt, observed);
++    return true;
++}
++
++bool TranslatorVisitor::LDEOR16Orders(bool /*acquire*/, bool /*release*/, Reg Rs, Reg Rn, Reg Rt) {
++    IR::U64 address;
++    if (Rn == Reg::SP) address = SP(64);
++    else address = X(64, Rn);
++    const IR::U32 operand = X(32, Rs); // Capture before a possibly aliased Rt write.
++    const IR::U32 observed = ir.AtomicFetchXor16(address, operand);
++    X(32, Rt, observed);
++    return true;
++}
++
++bool TranslatorVisitor::LDSET16Orders(bool /*acquire*/, bool /*release*/, Reg Rs, Reg Rn, Reg Rt) {
++    IR::U64 address;
++    if (Rn == Reg::SP) address = SP(64);
++    else address = X(64, Rn);
++    const IR::U32 operand = X(32, Rs); // Capture before a possibly aliased Rt write.
++    const IR::U32 observed = ir.AtomicFetchOr16(address, operand);
++    X(32, Rt, observed);
++    return true;
++}
++
++bool TranslatorVisitor::LDCLR16Orders(bool /*acquire*/, bool /*release*/, Reg Rs, Reg Rn, Reg Rt) {
++    IR::U64 address;
++    if (Rn == Reg::SP) address = SP(64);
++    else address = X(64, Rn);
++    const IR::U32 operand = X(32, Rs); // Capture before a possibly aliased Rt write.
++    const IR::U32 observed = ir.AtomicFetchClear16(address, operand);
++    X(32, Rt, observed);
++    return true;
++}
++
++bool TranslatorVisitor::LDADD16Orders(bool /*acquire*/, bool /*release*/, Reg Rs, Reg Rn, Reg Rt) {
++    IR::U64 address;
++    if (Rn == Reg::SP) address = SP(64);
++    else address = X(64, Rn);
++    const IR::U32 operand = X(32, Rs); // Capture before a possibly aliased Rt write.
++    const IR::U32 observed = ir.AtomicFetchAdd16(address, operand);
++    X(32, Rt, observed);
++    return true;
++}
++
++bool TranslatorVisitor::SWP8Orders(bool /*acquire*/, bool /*release*/, Reg Rs, Reg Rn, Reg Rt) {
++    IR::U64 address;
++    if (Rn == Reg::SP) address = SP(64);
++    else address = X(64, Rn);
++    const IR::U32 operand = X(32, Rs); // Capture before a possibly aliased Rt write.
++    const IR::U32 observed = ir.AtomicExchange8(address, operand);
++    X(32, Rt, observed);
++    return true;
++}
++
++bool TranslatorVisitor::LDEOR8Orders(bool /*acquire*/, bool /*release*/, Reg Rs, Reg Rn, Reg Rt) {
++    IR::U64 address;
++    if (Rn == Reg::SP) address = SP(64);
++    else address = X(64, Rn);
++    const IR::U32 operand = X(32, Rs); // Capture before a possibly aliased Rt write.
++    const IR::U32 observed = ir.AtomicFetchXor8(address, operand);
++    X(32, Rt, observed);
++    return true;
++}
++
++bool TranslatorVisitor::LDSET8Orders(bool /*acquire*/, bool /*release*/, Reg Rs, Reg Rn, Reg Rt) {
++    IR::U64 address;
++    if (Rn == Reg::SP) address = SP(64);
++    else address = X(64, Rn);
++    const IR::U32 operand = X(32, Rs); // Capture before a possibly aliased Rt write.
++    const IR::U32 observed = ir.AtomicFetchOr8(address, operand);
++    X(32, Rt, observed);
++    return true;
++}
++
++bool TranslatorVisitor::LDCLR8Orders(bool /*acquire*/, bool /*release*/, Reg Rs, Reg Rn, Reg Rt) {
++    IR::U64 address;
++    if (Rn == Reg::SP) address = SP(64);
++    else address = X(64, Rn);
++    const IR::U32 operand = X(32, Rs); // Capture before a possibly aliased Rt write.
++    const IR::U32 observed = ir.AtomicFetchClear8(address, operand);
++    X(32, Rt, observed);
++    return true;
++}
++
++bool TranslatorVisitor::LDADD8Orders(bool /*acquire*/, bool /*release*/, Reg Rs, Reg Rn, Reg Rt) {
++    IR::U64 address;
++    if (Rn == Reg::SP) address = SP(64);
++    else address = X(64, Rn);
++    const IR::U32 operand = X(32, Rs); // Capture before a possibly aliased Rt write.
++    const IR::U32 observed = ir.AtomicFetchAdd8(address, operand);
+     X(32, Rt, observed);
+     return true;
+ }
+--- a/src/dynarmic/src/dynarmic/frontend/A64/a64_ir_emitter.h
++++ b/src/dynarmic/src/dynarmic/frontend/A64/a64_ir_emitter.h
+@@ -154,6 +154,56 @@
+                             ImmCurrentLocationDescriptor(), address, operand);
+     }
+ 
++    IR::U32 AtomicExchange16(const IR::U64& address, const IR::U32& operand) noexcept {
++        return Inst<IR::U32>(Opcode::A64AtomicExchange16,
++                            ImmCurrentLocationDescriptor(), address, operand);
++    }
++
++    IR::U32 AtomicFetchXor16(const IR::U64& address, const IR::U32& operand) noexcept {
++        return Inst<IR::U32>(Opcode::A64AtomicFetchXor16,
++                            ImmCurrentLocationDescriptor(), address, operand);
++    }
++
++    IR::U32 AtomicFetchOr16(const IR::U64& address, const IR::U32& operand) noexcept {
++        return Inst<IR::U32>(Opcode::A64AtomicFetchOr16,
++                            ImmCurrentLocationDescriptor(), address, operand);
++    }
++
++    IR::U32 AtomicFetchClear16(const IR::U64& address, const IR::U32& operand) noexcept {
++        return Inst<IR::U32>(Opcode::A64AtomicFetchClear16,
++                            ImmCurrentLocationDescriptor(), address, operand);
++    }
++
++    IR::U32 AtomicFetchAdd16(const IR::U64& address, const IR::U32& operand) noexcept {
++        return Inst<IR::U32>(Opcode::A64AtomicFetchAdd16,
++                            ImmCurrentLocationDescriptor(), address, operand);
++    }
++
++    IR::U32 AtomicExchange8(const IR::U64& address, const IR::U32& operand) noexcept {
++        return Inst<IR::U32>(Opcode::A64AtomicExchange8,
++                            ImmCurrentLocationDescriptor(), address, operand);
++    }
++
++    IR::U32 AtomicFetchXor8(const IR::U64& address, const IR::U32& operand) noexcept {
++        return Inst<IR::U32>(Opcode::A64AtomicFetchXor8,
++                            ImmCurrentLocationDescriptor(), address, operand);
++    }
++
++    IR::U32 AtomicFetchOr8(const IR::U64& address, const IR::U32& operand) noexcept {
++        return Inst<IR::U32>(Opcode::A64AtomicFetchOr8,
++                            ImmCurrentLocationDescriptor(), address, operand);
++    }
++
++    IR::U32 AtomicFetchClear8(const IR::U64& address, const IR::U32& operand) noexcept {
++        return Inst<IR::U32>(Opcode::A64AtomicFetchClear8,
++                            ImmCurrentLocationDescriptor(), address, operand);
++    }
++
++    IR::U32 AtomicFetchAdd8(const IR::U64& address, const IR::U32& operand) noexcept {
++        return Inst<IR::U32>(Opcode::A64AtomicFetchAdd8,
++                            ImmCurrentLocationDescriptor(), address, operand);
++    }
++
+     IR::U32 AtomicExchange32(const IR::U64& address, const IR::U32& operand) noexcept {
+         return Inst<IR::U32>(Opcode::A64AtomicExchange32,
+                             ImmCurrentLocationDescriptor(), address, operand);
+--- a/src/dynarmic/src/dynarmic/ir/opcodes.inc
++++ b/src/dynarmic/src/dynarmic/ir/opcodes.inc
+@@ -794,3 +794,13 @@
+ A64OPC(AtomicExchange32, U32, U64, U64, U32)
+ A64OPC(AtomicCompareExchange8, U32, U64, U64, U32, U32)
+ A64OPC(AtomicCompareExchange16, U32, U64, U64, U32, U32)
++A64OPC(AtomicFetchAdd8, U32, U64, U64, U32)
++A64OPC(AtomicFetchClear8, U32, U64, U64, U32)
++A64OPC(AtomicFetchOr8, U32, U64, U64, U32)
++A64OPC(AtomicFetchXor8, U32, U64, U64, U32)
++A64OPC(AtomicExchange8, U32, U64, U64, U32)
++A64OPC(AtomicFetchAdd16, U32, U64, U64, U32)
++A64OPC(AtomicFetchClear16, U32, U64, U64, U32)
++A64OPC(AtomicFetchOr16, U32, U64, U64, U32)
++A64OPC(AtomicFetchXor16, U32, U64, U64, U32)
++A64OPC(AtomicExchange16, U32, U64, U64, U32)
+--- a/src/dynarmic/src/dynarmic/ir/opcodes.h
++++ b/src/dynarmic/src/dynarmic/ir/opcodes.h
+@@ -82,6 +82,16 @@
+     case Opcode::A64AtomicCompareExchange8:
+     case Opcode::A64AtomicCompareExchange64:
+     case Opcode::A64AtomicFetchAdd32:
++    case Opcode::A64AtomicExchange16:
++    case Opcode::A64AtomicFetchXor16:
++    case Opcode::A64AtomicFetchOr16:
++    case Opcode::A64AtomicFetchClear16:
++    case Opcode::A64AtomicFetchAdd16:
++    case Opcode::A64AtomicExchange8:
++    case Opcode::A64AtomicFetchXor8:
++    case Opcode::A64AtomicFetchOr8:
++    case Opcode::A64AtomicFetchClear8:
++    case Opcode::A64AtomicFetchAdd8:
+     case Opcode::A64AtomicExchange32:
+     case Opcode::A64AtomicFetchXor32:
+     case Opcode::A64AtomicExchange64:
+@@ -182,12 +192,12 @@
+ 
+ /// @brief Determines whether or not this instruction performs any kind of memory read.
+ constexpr bool IsMemoryRead(const Opcode op) noexcept {
+-    return op == Opcode::A64AtomicCompareExchange32 || op == Opcode::A64AtomicCompareExchange16 || op == Opcode::A64AtomicCompareExchange8 || op == Opcode::A64AtomicCompareExchange64 || op == Opcode::A64AtomicFetchAdd32 || op == Opcode::A64AtomicExchange32 || op == Opcode::A64AtomicFetchXor32 || op == Opcode::A64AtomicExchange64 || op == Opcode::A64AtomicFetchXor64 || op == Opcode::A64AtomicFetchClear64 || op == Opcode::A64AtomicFetchOr64 || op == Opcode::A64AtomicFetchAdd64 || op == Opcode::A64AtomicFetchClear32 || op == Opcode::A64AtomicFetchOr32 || IsSharedMemoryRead(op) || IsExclusiveMemoryRead(op);
++    return op == Opcode::A64AtomicCompareExchange32 || op == Opcode::A64AtomicCompareExchange16 || op == Opcode::A64AtomicCompareExchange8 || op == Opcode::A64AtomicCompareExchange64 || op == Opcode::A64AtomicFetchAdd32 || op == Opcode::A64AtomicExchange16 || op == Opcode::A64AtomicFetchXor16 || op == Opcode::A64AtomicFetchOr16 || op == Opcode::A64AtomicFetchClear16 || op == Opcode::A64AtomicFetchAdd16 || op == Opcode::A64AtomicExchange8 || op == Opcode::A64AtomicFetchXor8 || op == Opcode::A64AtomicFetchOr8 || op == Opcode::A64AtomicFetchClear8 || op == Opcode::A64AtomicFetchAdd8 || op == Opcode::A64AtomicExchange32 || op == Opcode::A64AtomicFetchXor32 || op == Opcode::A64AtomicExchange64 || op == Opcode::A64AtomicFetchXor64 || op == Opcode::A64AtomicFetchClear64 || op == Opcode::A64AtomicFetchOr64 || op == Opcode::A64AtomicFetchAdd64 || op == Opcode::A64AtomicFetchClear32 || op == Opcode::A64AtomicFetchOr32 || IsSharedMemoryRead(op) || IsExclusiveMemoryRead(op);
+ }
+ 
+ /// @brief Determines whether or not this instruction performs any kind of memory write.
+ constexpr bool IsMemoryWrite(const Opcode op) noexcept {
+-    return op == Opcode::A64AtomicCompareExchange32 || op == Opcode::A64AtomicCompareExchange16 || op == Opcode::A64AtomicCompareExchange8 || op == Opcode::A64AtomicCompareExchange64 || op == Opcode::A64AtomicFetchAdd32 || op == Opcode::A64AtomicExchange32 || op == Opcode::A64AtomicFetchXor32 || op == Opcode::A64AtomicExchange64 || op == Opcode::A64AtomicFetchXor64 || op == Opcode::A64AtomicFetchClear64 || op == Opcode::A64AtomicFetchOr64 || op == Opcode::A64AtomicFetchAdd64 || op == Opcode::A64AtomicFetchClear32 || op == Opcode::A64AtomicFetchOr32 || IsSharedMemoryWrite(op) || IsExclusiveMemoryWrite(op);
++    return op == Opcode::A64AtomicCompareExchange32 || op == Opcode::A64AtomicCompareExchange16 || op == Opcode::A64AtomicCompareExchange8 || op == Opcode::A64AtomicCompareExchange64 || op == Opcode::A64AtomicFetchAdd32 || op == Opcode::A64AtomicExchange16 || op == Opcode::A64AtomicFetchXor16 || op == Opcode::A64AtomicFetchOr16 || op == Opcode::A64AtomicFetchClear16 || op == Opcode::A64AtomicFetchAdd16 || op == Opcode::A64AtomicExchange8 || op == Opcode::A64AtomicFetchXor8 || op == Opcode::A64AtomicFetchOr8 || op == Opcode::A64AtomicFetchClear8 || op == Opcode::A64AtomicFetchAdd8 || op == Opcode::A64AtomicExchange32 || op == Opcode::A64AtomicFetchXor32 || op == Opcode::A64AtomicExchange64 || op == Opcode::A64AtomicFetchXor64 || op == Opcode::A64AtomicFetchClear64 || op == Opcode::A64AtomicFetchOr64 || op == Opcode::A64AtomicFetchAdd64 || op == Opcode::A64AtomicFetchClear32 || op == Opcode::A64AtomicFetchOr32 || IsSharedMemoryWrite(op) || IsExclusiveMemoryWrite(op);
+ }
+ 
+ /// @brief Determines whether or not this instruction performs any kind of memory access.
+--- a/src/dynarmic/src/dynarmic/ir/opt_passes.cpp
++++ b/src/dynarmic/src/dynarmic/ir/opt_passes.cpp
+@@ -558,6 +558,16 @@
+         case IR::Opcode::A64AtomicCompareExchange8:
+         case IR::Opcode::A64AtomicCompareExchange64:
+         case IR::Opcode::A64AtomicFetchAdd32:
++        case IR::Opcode::A64AtomicExchange16:
++        case IR::Opcode::A64AtomicFetchXor16:
++        case IR::Opcode::A64AtomicFetchOr16:
++        case IR::Opcode::A64AtomicFetchClear16:
++        case IR::Opcode::A64AtomicFetchAdd16:
++        case IR::Opcode::A64AtomicExchange8:
++        case IR::Opcode::A64AtomicFetchXor8:
++        case IR::Opcode::A64AtomicFetchOr8:
++        case IR::Opcode::A64AtomicFetchClear8:
++        case IR::Opcode::A64AtomicFetchAdd8:
+         case IR::Opcode::A64AtomicExchange32:
+         case IR::Opcode::A64AtomicFetchXor32:
+         case IR::Opcode::A64AtomicExchange64:
+--- a/src/dynarmic/src/dynarmic/backend/x64/a64_emit_x64.cpp
++++ b/src/dynarmic/src/dynarmic/backend/x64/a64_emit_x64.cpp
+@@ -139,6 +139,56 @@
+             EmitA64AtomicFetchAdd32(ctx, &inst);
+             goto finish_this_inst;
+         }
++
++        if (opcode == IR::Opcode::A64AtomicExchange16) {
++            EmitA64AtomicExchange16(ctx, &inst);
++            goto finish_this_inst;
++        }
++
++        if (opcode == IR::Opcode::A64AtomicFetchXor16) {
++            EmitA64AtomicFetchXor16(ctx, &inst);
++            goto finish_this_inst;
++        }
++
++        if (opcode == IR::Opcode::A64AtomicFetchOr16) {
++            EmitA64AtomicFetchOr16(ctx, &inst);
++            goto finish_this_inst;
++        }
++
++        if (opcode == IR::Opcode::A64AtomicFetchClear16) {
++            EmitA64AtomicFetchClear16(ctx, &inst);
++            goto finish_this_inst;
++        }
++
++        if (opcode == IR::Opcode::A64AtomicFetchAdd16) {
++            EmitA64AtomicFetchAdd16(ctx, &inst);
++            goto finish_this_inst;
++        }
++
++        if (opcode == IR::Opcode::A64AtomicExchange8) {
++            EmitA64AtomicExchange8(ctx, &inst);
++            goto finish_this_inst;
++        }
++
++        if (opcode == IR::Opcode::A64AtomicFetchXor8) {
++            EmitA64AtomicFetchXor8(ctx, &inst);
++            goto finish_this_inst;
++        }
++
++        if (opcode == IR::Opcode::A64AtomicFetchOr8) {
++            EmitA64AtomicFetchOr8(ctx, &inst);
++            goto finish_this_inst;
++        }
++
++        if (opcode == IR::Opcode::A64AtomicFetchClear8) {
++            EmitA64AtomicFetchClear8(ctx, &inst);
++            goto finish_this_inst;
++        }
++
++        if (opcode == IR::Opcode::A64AtomicFetchAdd8) {
++            EmitA64AtomicFetchAdd8(ctx, &inst);
++            goto finish_this_inst;
++        }
+         if (opcode == IR::Opcode::A64AtomicExchange32) {
+             EmitA64AtomicExchange32(ctx, &inst);
+             goto finish_this_inst;
+--- a/src/dynarmic/src/dynarmic/backend/x64/a64_emit_x64_memory.cpp
++++ b/src/dynarmic/src/dynarmic/backend/x64/a64_emit_x64_memory.cpp
+@@ -546,6 +546,466 @@
+     EmitCheckMemoryAbort(ctx, inst);
+ }
+ 
++// Narrow typed checked CAS loop; arithmetic truncates only the memory operand.
++static std::optional<u32> AtomicExchange16Checked(A64::UserCallbacks& callbacks,
++        ExclusiveMonitor* monitor, A64::VAddr address, u32 operand) {
++    u16 expected = 0;
++    for (;;) {
++        const u16 desired = static_cast<u16>(operand);
++        const auto observed = callbacks.MemoryAtomicCompareExchange16(address, expected, desired, monitor);
++        if (!observed || *observed == expected) return observed;
++        expected = *observed;
++    }
++}
++
++void A64EmitX64::EmitA64AtomicExchange16(A64EmitContext& ctx, IR::Inst* inst) {
++    auto args = ctx.reg_alloc.GetArgumentInfo(inst);
++    ctx.reg_alloc.HostCall(code, inst, {}, args[1], args[2]);
++#ifdef EDEN_SHARED_JIT_LAYOUT
++    code.mov(code.ABI_PARAM1, code.ABI_JIT_PTR);
++    code.CallLambda([](A64JitState& state, A64::VAddr address, u32 operand) -> u32 {
++        const auto* config = static_cast<const A64::UserConfig*>(state.eden_conf);
++        auto* callbacks = static_cast<A64::UserCallbacks*>(state.eden_callbacks);
++        if (!config || !callbacks || !state.eden_jit) {
++            std::fputs("CPU_TRACE swp16orders_runtime_context_missing action=abort_no_fake_success\n", stderr);
++            std::abort();
++        }
++        const auto observed = AtomicExchange16Checked(*callbacks, config->global_monitor, address, operand);
++        if (!observed) {
++            Atomic::Or(&state.halt_reason, static_cast<u32>(HaltReason::MemoryAbort));
++            return 0; // Fault placeholder is never written back architecturally.
++        }
++        return *observed;
++    });
++#else
++    code.mov(code.ABI_PARAM1, reinterpret_cast<u64>(this));
++    code.CallLambda([](A64EmitX64& emitter, A64::VAddr address, u32 operand) -> u32 {
++        const auto observed = AtomicExchange16Checked(*emitter.conf.callbacks,
++            emitter.conf.global_monitor, address, operand);
++        if (!observed) {
++            emitter.jit_interface->HaltExecution(HaltReason::MemoryAbort);
++            return 0;
++        }
++        return *observed;
++    });
++#endif
++    EmitCheckMemoryAbort(ctx, inst);
++}
++
++// Narrow typed checked CAS loop; arithmetic truncates only the memory operand.
++static std::optional<u32> AtomicFetchXor16Checked(A64::UserCallbacks& callbacks,
++        ExclusiveMonitor* monitor, A64::VAddr address, u32 operand) {
++    u16 expected = 0;
++    for (;;) {
++        const u16 desired = static_cast<u16>(expected ^ operand);
++        const auto observed = callbacks.MemoryAtomicCompareExchange16(address, expected, desired, monitor);
++        if (!observed || *observed == expected) return observed;
++        expected = *observed;
++    }
++}
++
++void A64EmitX64::EmitA64AtomicFetchXor16(A64EmitContext& ctx, IR::Inst* inst) {
++    auto args = ctx.reg_alloc.GetArgumentInfo(inst);
++    ctx.reg_alloc.HostCall(code, inst, {}, args[1], args[2]);
++#ifdef EDEN_SHARED_JIT_LAYOUT
++    code.mov(code.ABI_PARAM1, code.ABI_JIT_PTR);
++    code.CallLambda([](A64JitState& state, A64::VAddr address, u32 operand) -> u32 {
++        const auto* config = static_cast<const A64::UserConfig*>(state.eden_conf);
++        auto* callbacks = static_cast<A64::UserCallbacks*>(state.eden_callbacks);
++        if (!config || !callbacks || !state.eden_jit) {
++            std::fputs("CPU_TRACE ldeor16orders_runtime_context_missing action=abort_no_fake_success\n", stderr);
++            std::abort();
++        }
++        const auto observed = AtomicFetchXor16Checked(*callbacks, config->global_monitor, address, operand);
++        if (!observed) {
++            Atomic::Or(&state.halt_reason, static_cast<u32>(HaltReason::MemoryAbort));
++            return 0; // Fault placeholder is never written back architecturally.
++        }
++        return *observed;
++    });
++#else
++    code.mov(code.ABI_PARAM1, reinterpret_cast<u64>(this));
++    code.CallLambda([](A64EmitX64& emitter, A64::VAddr address, u32 operand) -> u32 {
++        const auto observed = AtomicFetchXor16Checked(*emitter.conf.callbacks,
++            emitter.conf.global_monitor, address, operand);
++        if (!observed) {
++            emitter.jit_interface->HaltExecution(HaltReason::MemoryAbort);
++            return 0;
++        }
++        return *observed;
++    });
++#endif
++    EmitCheckMemoryAbort(ctx, inst);
++}
++
++// Narrow typed checked CAS loop; arithmetic truncates only the memory operand.
++static std::optional<u32> AtomicFetchOr16Checked(A64::UserCallbacks& callbacks,
++        ExclusiveMonitor* monitor, A64::VAddr address, u32 operand) {
++    u16 expected = 0;
++    for (;;) {
++        const u16 desired = static_cast<u16>(expected | operand);
++        const auto observed = callbacks.MemoryAtomicCompareExchange16(address, expected, desired, monitor);
++        if (!observed || *observed == expected) return observed;
++        expected = *observed;
++    }
++}
++
++void A64EmitX64::EmitA64AtomicFetchOr16(A64EmitContext& ctx, IR::Inst* inst) {
++    auto args = ctx.reg_alloc.GetArgumentInfo(inst);
++    ctx.reg_alloc.HostCall(code, inst, {}, args[1], args[2]);
++#ifdef EDEN_SHARED_JIT_LAYOUT
++    code.mov(code.ABI_PARAM1, code.ABI_JIT_PTR);
++    code.CallLambda([](A64JitState& state, A64::VAddr address, u32 operand) -> u32 {
++        const auto* config = static_cast<const A64::UserConfig*>(state.eden_conf);
++        auto* callbacks = static_cast<A64::UserCallbacks*>(state.eden_callbacks);
++        if (!config || !callbacks || !state.eden_jit) {
++            std::fputs("CPU_TRACE ldset16orders_runtime_context_missing action=abort_no_fake_success\n", stderr);
++            std::abort();
++        }
++        const auto observed = AtomicFetchOr16Checked(*callbacks, config->global_monitor, address, operand);
++        if (!observed) {
++            Atomic::Or(&state.halt_reason, static_cast<u32>(HaltReason::MemoryAbort));
++            return 0; // Fault placeholder is never written back architecturally.
++        }
++        return *observed;
++    });
++#else
++    code.mov(code.ABI_PARAM1, reinterpret_cast<u64>(this));
++    code.CallLambda([](A64EmitX64& emitter, A64::VAddr address, u32 operand) -> u32 {
++        const auto observed = AtomicFetchOr16Checked(*emitter.conf.callbacks,
++            emitter.conf.global_monitor, address, operand);
++        if (!observed) {
++            emitter.jit_interface->HaltExecution(HaltReason::MemoryAbort);
++            return 0;
++        }
++        return *observed;
++    });
++#endif
++    EmitCheckMemoryAbort(ctx, inst);
++}
++
++// Narrow typed checked CAS loop; arithmetic truncates only the memory operand.
++static std::optional<u32> AtomicFetchClear16Checked(A64::UserCallbacks& callbacks,
++        ExclusiveMonitor* monitor, A64::VAddr address, u32 operand) {
++    u16 expected = 0;
++    for (;;) {
++        const u16 desired = static_cast<u16>(expected & ~operand);
++        const auto observed = callbacks.MemoryAtomicCompareExchange16(address, expected, desired, monitor);
++        if (!observed || *observed == expected) return observed;
++        expected = *observed;
++    }
++}
++
++void A64EmitX64::EmitA64AtomicFetchClear16(A64EmitContext& ctx, IR::Inst* inst) {
++    auto args = ctx.reg_alloc.GetArgumentInfo(inst);
++    ctx.reg_alloc.HostCall(code, inst, {}, args[1], args[2]);
++#ifdef EDEN_SHARED_JIT_LAYOUT
++    code.mov(code.ABI_PARAM1, code.ABI_JIT_PTR);
++    code.CallLambda([](A64JitState& state, A64::VAddr address, u32 operand) -> u32 {
++        const auto* config = static_cast<const A64::UserConfig*>(state.eden_conf);
++        auto* callbacks = static_cast<A64::UserCallbacks*>(state.eden_callbacks);
++        if (!config || !callbacks || !state.eden_jit) {
++            std::fputs("CPU_TRACE ldclr16orders_runtime_context_missing action=abort_no_fake_success\n", stderr);
++            std::abort();
++        }
++        const auto observed = AtomicFetchClear16Checked(*callbacks, config->global_monitor, address, operand);
++        if (!observed) {
++            Atomic::Or(&state.halt_reason, static_cast<u32>(HaltReason::MemoryAbort));
++            return 0; // Fault placeholder is never written back architecturally.
++        }
++        return *observed;
++    });
++#else
++    code.mov(code.ABI_PARAM1, reinterpret_cast<u64>(this));
++    code.CallLambda([](A64EmitX64& emitter, A64::VAddr address, u32 operand) -> u32 {
++        const auto observed = AtomicFetchClear16Checked(*emitter.conf.callbacks,
++            emitter.conf.global_monitor, address, operand);
++        if (!observed) {
++            emitter.jit_interface->HaltExecution(HaltReason::MemoryAbort);
++            return 0;
++        }
++        return *observed;
++    });
++#endif
++    EmitCheckMemoryAbort(ctx, inst);
++}
++
++// Narrow typed checked CAS loop; arithmetic truncates only the memory operand.
++static std::optional<u32> AtomicFetchAdd16Checked(A64::UserCallbacks& callbacks,
++        ExclusiveMonitor* monitor, A64::VAddr address, u32 operand) {
++    u16 expected = 0;
++    for (;;) {
++        const u16 desired = static_cast<u16>(expected + operand);
++        const auto observed = callbacks.MemoryAtomicCompareExchange16(address, expected, desired, monitor);
++        if (!observed || *observed == expected) return observed;
++        expected = *observed;
++    }
++}
++
++void A64EmitX64::EmitA64AtomicFetchAdd16(A64EmitContext& ctx, IR::Inst* inst) {
++    auto args = ctx.reg_alloc.GetArgumentInfo(inst);
++    ctx.reg_alloc.HostCall(code, inst, {}, args[1], args[2]);
++#ifdef EDEN_SHARED_JIT_LAYOUT
++    code.mov(code.ABI_PARAM1, code.ABI_JIT_PTR);
++    code.CallLambda([](A64JitState& state, A64::VAddr address, u32 operand) -> u32 {
++        const auto* config = static_cast<const A64::UserConfig*>(state.eden_conf);
++        auto* callbacks = static_cast<A64::UserCallbacks*>(state.eden_callbacks);
++        if (!config || !callbacks || !state.eden_jit) {
++            std::fputs("CPU_TRACE ldadd16orders_runtime_context_missing action=abort_no_fake_success\n", stderr);
++            std::abort();
++        }
++        const auto observed = AtomicFetchAdd16Checked(*callbacks, config->global_monitor, address, operand);
++        if (!observed) {
++            Atomic::Or(&state.halt_reason, static_cast<u32>(HaltReason::MemoryAbort));
++            return 0; // Fault placeholder is never written back architecturally.
++        }
++        return *observed;
++    });
++#else
++    code.mov(code.ABI_PARAM1, reinterpret_cast<u64>(this));
++    code.CallLambda([](A64EmitX64& emitter, A64::VAddr address, u32 operand) -> u32 {
++        const auto observed = AtomicFetchAdd16Checked(*emitter.conf.callbacks,
++            emitter.conf.global_monitor, address, operand);
++        if (!observed) {
++            emitter.jit_interface->HaltExecution(HaltReason::MemoryAbort);
++            return 0;
++        }
++        return *observed;
++    });
++#endif
++    EmitCheckMemoryAbort(ctx, inst);
++}
++
++// Narrow typed checked CAS loop; arithmetic truncates only the memory operand.
++static std::optional<u32> AtomicExchange8Checked(A64::UserCallbacks& callbacks,
++        ExclusiveMonitor* monitor, A64::VAddr address, u32 operand) {
++    u8 expected = 0;
++    for (;;) {
++        const u8 desired = static_cast<u8>(operand);
++        const auto observed = callbacks.MemoryAtomicCompareExchange8(address, expected, desired, monitor);
++        if (!observed || *observed == expected) return observed;
++        expected = *observed;
++    }
++}
++
++void A64EmitX64::EmitA64AtomicExchange8(A64EmitContext& ctx, IR::Inst* inst) {
++    auto args = ctx.reg_alloc.GetArgumentInfo(inst);
++    ctx.reg_alloc.HostCall(code, inst, {}, args[1], args[2]);
++#ifdef EDEN_SHARED_JIT_LAYOUT
++    code.mov(code.ABI_PARAM1, code.ABI_JIT_PTR);
++    code.CallLambda([](A64JitState& state, A64::VAddr address, u32 operand) -> u32 {
++        const auto* config = static_cast<const A64::UserConfig*>(state.eden_conf);
++        auto* callbacks = static_cast<A64::UserCallbacks*>(state.eden_callbacks);
++        if (!config || !callbacks || !state.eden_jit) {
++            std::fputs("CPU_TRACE swp8orders_runtime_context_missing action=abort_no_fake_success\n", stderr);
++            std::abort();
++        }
++        const auto observed = AtomicExchange8Checked(*callbacks, config->global_monitor, address, operand);
++        if (!observed) {
++            Atomic::Or(&state.halt_reason, static_cast<u32>(HaltReason::MemoryAbort));
++            return 0; // Fault placeholder is never written back architecturally.
++        }
++        return *observed;
++    });
++#else
++    code.mov(code.ABI_PARAM1, reinterpret_cast<u64>(this));
++    code.CallLambda([](A64EmitX64& emitter, A64::VAddr address, u32 operand) -> u32 {
++        const auto observed = AtomicExchange8Checked(*emitter.conf.callbacks,
++            emitter.conf.global_monitor, address, operand);
++        if (!observed) {
++            emitter.jit_interface->HaltExecution(HaltReason::MemoryAbort);
++            return 0;
++        }
++        return *observed;
++    });
++#endif
++    EmitCheckMemoryAbort(ctx, inst);
++}
++
++// Narrow typed checked CAS loop; arithmetic truncates only the memory operand.
++static std::optional<u32> AtomicFetchXor8Checked(A64::UserCallbacks& callbacks,
++        ExclusiveMonitor* monitor, A64::VAddr address, u32 operand) {
++    u8 expected = 0;
++    for (;;) {
++        const u8 desired = static_cast<u8>(expected ^ operand);
++        const auto observed = callbacks.MemoryAtomicCompareExchange8(address, expected, desired, monitor);
++        if (!observed || *observed == expected) return observed;
++        expected = *observed;
++    }
++}
++
++void A64EmitX64::EmitA64AtomicFetchXor8(A64EmitContext& ctx, IR::Inst* inst) {
++    auto args = ctx.reg_alloc.GetArgumentInfo(inst);
++    ctx.reg_alloc.HostCall(code, inst, {}, args[1], args[2]);
++#ifdef EDEN_SHARED_JIT_LAYOUT
++    code.mov(code.ABI_PARAM1, code.ABI_JIT_PTR);
++    code.CallLambda([](A64JitState& state, A64::VAddr address, u32 operand) -> u32 {
++        const auto* config = static_cast<const A64::UserConfig*>(state.eden_conf);
++        auto* callbacks = static_cast<A64::UserCallbacks*>(state.eden_callbacks);
++        if (!config || !callbacks || !state.eden_jit) {
++            std::fputs("CPU_TRACE ldeor8orders_runtime_context_missing action=abort_no_fake_success\n", stderr);
++            std::abort();
++        }
++        const auto observed = AtomicFetchXor8Checked(*callbacks, config->global_monitor, address, operand);
++        if (!observed) {
++            Atomic::Or(&state.halt_reason, static_cast<u32>(HaltReason::MemoryAbort));
++            return 0; // Fault placeholder is never written back architecturally.
++        }
++        return *observed;
++    });
++#else
++    code.mov(code.ABI_PARAM1, reinterpret_cast<u64>(this));
++    code.CallLambda([](A64EmitX64& emitter, A64::VAddr address, u32 operand) -> u32 {
++        const auto observed = AtomicFetchXor8Checked(*emitter.conf.callbacks,
++            emitter.conf.global_monitor, address, operand);
++        if (!observed) {
++            emitter.jit_interface->HaltExecution(HaltReason::MemoryAbort);
++            return 0;
++        }
++        return *observed;
++    });
++#endif
++    EmitCheckMemoryAbort(ctx, inst);
++}
++
++// Narrow typed checked CAS loop; arithmetic truncates only the memory operand.
++static std::optional<u32> AtomicFetchOr8Checked(A64::UserCallbacks& callbacks,
++        ExclusiveMonitor* monitor, A64::VAddr address, u32 operand) {
++    u8 expected = 0;
++    for (;;) {
++        const u8 desired = static_cast<u8>(expected | operand);
++        const auto observed = callbacks.MemoryAtomicCompareExchange8(address, expected, desired, monitor);
++        if (!observed || *observed == expected) return observed;
++        expected = *observed;
++    }
++}
++
++void A64EmitX64::EmitA64AtomicFetchOr8(A64EmitContext& ctx, IR::Inst* inst) {
++    auto args = ctx.reg_alloc.GetArgumentInfo(inst);
++    ctx.reg_alloc.HostCall(code, inst, {}, args[1], args[2]);
++#ifdef EDEN_SHARED_JIT_LAYOUT
++    code.mov(code.ABI_PARAM1, code.ABI_JIT_PTR);
++    code.CallLambda([](A64JitState& state, A64::VAddr address, u32 operand) -> u32 {
++        const auto* config = static_cast<const A64::UserConfig*>(state.eden_conf);
++        auto* callbacks = static_cast<A64::UserCallbacks*>(state.eden_callbacks);
++        if (!config || !callbacks || !state.eden_jit) {
++            std::fputs("CPU_TRACE ldset8orders_runtime_context_missing action=abort_no_fake_success\n", stderr);
++            std::abort();
++        }
++        const auto observed = AtomicFetchOr8Checked(*callbacks, config->global_monitor, address, operand);
++        if (!observed) {
++            Atomic::Or(&state.halt_reason, static_cast<u32>(HaltReason::MemoryAbort));
++            return 0; // Fault placeholder is never written back architecturally.
++        }
++        return *observed;
++    });
++#else
++    code.mov(code.ABI_PARAM1, reinterpret_cast<u64>(this));
++    code.CallLambda([](A64EmitX64& emitter, A64::VAddr address, u32 operand) -> u32 {
++        const auto observed = AtomicFetchOr8Checked(*emitter.conf.callbacks,
++            emitter.conf.global_monitor, address, operand);
++        if (!observed) {
++            emitter.jit_interface->HaltExecution(HaltReason::MemoryAbort);
++            return 0;
++        }
++        return *observed;
++    });
++#endif
++    EmitCheckMemoryAbort(ctx, inst);
++}
++
++// Narrow typed checked CAS loop; arithmetic truncates only the memory operand.
++static std::optional<u32> AtomicFetchClear8Checked(A64::UserCallbacks& callbacks,
++        ExclusiveMonitor* monitor, A64::VAddr address, u32 operand) {
++    u8 expected = 0;
++    for (;;) {
++        const u8 desired = static_cast<u8>(expected & ~operand);
++        const auto observed = callbacks.MemoryAtomicCompareExchange8(address, expected, desired, monitor);
++        if (!observed || *observed == expected) return observed;
++        expected = *observed;
++    }
++}
++
++void A64EmitX64::EmitA64AtomicFetchClear8(A64EmitContext& ctx, IR::Inst* inst) {
++    auto args = ctx.reg_alloc.GetArgumentInfo(inst);
++    ctx.reg_alloc.HostCall(code, inst, {}, args[1], args[2]);
++#ifdef EDEN_SHARED_JIT_LAYOUT
++    code.mov(code.ABI_PARAM1, code.ABI_JIT_PTR);
++    code.CallLambda([](A64JitState& state, A64::VAddr address, u32 operand) -> u32 {
++        const auto* config = static_cast<const A64::UserConfig*>(state.eden_conf);
++        auto* callbacks = static_cast<A64::UserCallbacks*>(state.eden_callbacks);
++        if (!config || !callbacks || !state.eden_jit) {
++            std::fputs("CPU_TRACE ldclr8orders_runtime_context_missing action=abort_no_fake_success\n", stderr);
++            std::abort();
++        }
++        const auto observed = AtomicFetchClear8Checked(*callbacks, config->global_monitor, address, operand);
++        if (!observed) {
++            Atomic::Or(&state.halt_reason, static_cast<u32>(HaltReason::MemoryAbort));
++            return 0; // Fault placeholder is never written back architecturally.
++        }
++        return *observed;
++    });
++#else
++    code.mov(code.ABI_PARAM1, reinterpret_cast<u64>(this));
++    code.CallLambda([](A64EmitX64& emitter, A64::VAddr address, u32 operand) -> u32 {
++        const auto observed = AtomicFetchClear8Checked(*emitter.conf.callbacks,
++            emitter.conf.global_monitor, address, operand);
++        if (!observed) {
++            emitter.jit_interface->HaltExecution(HaltReason::MemoryAbort);
++            return 0;
++        }
++        return *observed;
++    });
++#endif
++    EmitCheckMemoryAbort(ctx, inst);
++}
++
++// Narrow typed checked CAS loop; arithmetic truncates only the memory operand.
++static std::optional<u32> AtomicFetchAdd8Checked(A64::UserCallbacks& callbacks,
++        ExclusiveMonitor* monitor, A64::VAddr address, u32 operand) {
++    u8 expected = 0;
++    for (;;) {
++        const u8 desired = static_cast<u8>(expected + operand);
++        const auto observed = callbacks.MemoryAtomicCompareExchange8(address, expected, desired, monitor);
++        if (!observed || *observed == expected) return observed;
++        expected = *observed;
++    }
++}
++
++void A64EmitX64::EmitA64AtomicFetchAdd8(A64EmitContext& ctx, IR::Inst* inst) {
++    auto args = ctx.reg_alloc.GetArgumentInfo(inst);
++    ctx.reg_alloc.HostCall(code, inst, {}, args[1], args[2]);
++#ifdef EDEN_SHARED_JIT_LAYOUT
++    code.mov(code.ABI_PARAM1, code.ABI_JIT_PTR);
++    code.CallLambda([](A64JitState& state, A64::VAddr address, u32 operand) -> u32 {
++        const auto* config = static_cast<const A64::UserConfig*>(state.eden_conf);
++        auto* callbacks = static_cast<A64::UserCallbacks*>(state.eden_callbacks);
++        if (!config || !callbacks || !state.eden_jit) {
++            std::fputs("CPU_TRACE ldadd8orders_runtime_context_missing action=abort_no_fake_success\n", stderr);
++            std::abort();
++        }
++        const auto observed = AtomicFetchAdd8Checked(*callbacks, config->global_monitor, address, operand);
++        if (!observed) {
++            Atomic::Or(&state.halt_reason, static_cast<u32>(HaltReason::MemoryAbort));
++            return 0; // Fault placeholder is never written back architecturally.
++        }
++        return *observed;
++    });
++#else
++    code.mov(code.ABI_PARAM1, reinterpret_cast<u64>(this));
++    code.CallLambda([](A64EmitX64& emitter, A64::VAddr address, u32 operand) -> u32 {
++        const auto observed = AtomicFetchAdd8Checked(*emitter.conf.callbacks,
++            emitter.conf.global_monitor, address, operand);
++        if (!observed) {
++            emitter.jit_interface->HaltExecution(HaltReason::MemoryAbort);
++            return 0;
++        }
++        return *observed;
++    });
++#endif
++    EmitCheckMemoryAbort(ctx, inst);
++}
++
+ // Checked real CAS loop, old-value result, conservative full barriers.
+ static std::optional<u32> AtomicExchange32Checked(A64::UserCallbacks& callbacks,
+         ExclusiveMonitor* monitor, A64::VAddr address, u32 operand) {
+@@ -1050,6 +1510,16 @@
+         inst->GetOpcode() != IR::Opcode::A64AtomicCompareExchange16 &&
+         inst->GetOpcode() != IR::Opcode::A64AtomicCompareExchange8 &&
+         inst->GetOpcode() != IR::Opcode::A64AtomicFetchAdd32 &&
++        inst->GetOpcode() != IR::Opcode::A64AtomicExchange16 &&
++        inst->GetOpcode() != IR::Opcode::A64AtomicFetchXor16 &&
++        inst->GetOpcode() != IR::Opcode::A64AtomicFetchOr16 &&
++        inst->GetOpcode() != IR::Opcode::A64AtomicFetchClear16 &&
++        inst->GetOpcode() != IR::Opcode::A64AtomicFetchAdd16 &&
++        inst->GetOpcode() != IR::Opcode::A64AtomicExchange8 &&
++        inst->GetOpcode() != IR::Opcode::A64AtomicFetchXor8 &&
++        inst->GetOpcode() != IR::Opcode::A64AtomicFetchOr8 &&
++        inst->GetOpcode() != IR::Opcode::A64AtomicFetchClear8 &&
++        inst->GetOpcode() != IR::Opcode::A64AtomicFetchAdd8 &&
+         inst->GetOpcode() != IR::Opcode::A64AtomicExchange32 &&
+         inst->GetOpcode() != IR::Opcode::A64AtomicFetchXor32 &&
+         inst->GetOpcode() != IR::Opcode::A64AtomicExchange64 &&

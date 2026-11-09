@@ -1,0 +1,470 @@
+--- a/src/dynarmic/src/dynarmic/frontend/A64/decoder/a64.inc
++++ b/src/dynarmic/src/dynarmic/frontend/A64/decoder/a64.inc
+@@ -111,6 +111,8 @@
+ INST(SWP32Orders, "SWP32Orders checked full-barrier", "10111000AR1sssss100000nnnnnttttt")
+ INST(LDADD32Orders, "LDADD, LDADDA, LDADDL, LDADDAL (32-bit)", "10111000AR1sssss000000nnnnnttttt")
+ INST(CAS64Orders, "CAS, CASA, CASL, CASAL (64-bit)", "110010001L1sssssO11111nnnnnttttt")
++INST(CAS8Orders, "CAS byte/halfword checked all orders", "000010001L1sssssO11111nnnnnttttt")
++INST(CAS16Orders, "CAS byte/halfword checked all orders", "010010001L1sssssO11111nnnnnttttt")
+ INST(CAS32, "CAS, CASA, CASL, CASAL (32-bit only)", "100010001L1sssssO11111nnnnnttttt")
+ INST(LDXR, "LDXRB, LDXRH, LDXR", "zz00100001011111011111nnnnnttttt")
+ INST(LDAXR, "LDAXRB, LDAXRH, LDAXR", "zz00100001011111111111nnnnnttttt")
+--- a/src/dynarmic/src/dynarmic/frontend/A64/translate/impl/impl.h
++++ b/src/dynarmic/src/dynarmic/frontend/A64/translate/impl/impl.h
+@@ -251,6 +251,8 @@
+     bool SWP32Orders(bool acquire, bool release, Reg Rs, Reg Rn, Reg Rt);
+     bool LDADD32Orders(bool acquire, bool release, Reg Rs, Reg Rn, Reg Rt);
+     bool CAS64Orders(bool acquire, Reg Rs, bool release, Reg Rn, Reg Rt);
++    bool CAS8Orders(bool acquire, Reg Rs, bool release, Reg Rn, Reg Rt);
++    bool CAS16Orders(bool acquire, Reg Rs, bool release, Reg Rn, Reg Rt);
+     bool CAS32(bool acquire, Reg Rs, bool release, Reg Rn, Reg Rt);
+     bool LDXR(Imm<2> size, Reg Rn, Reg Rt);
+     bool LDAXR(Imm<2> size, Reg Rn, Reg Rt);
+--- a/src/dynarmic/src/dynarmic/frontend/A64/translate/impl/load_store_exclusive.cpp
++++ b/src/dynarmic/src/dynarmic/frontend/A64/translate/impl/load_store_exclusive.cpp
+@@ -22,6 +22,34 @@
+     const IR::U32 expected = X(32, Rs);
+     const IR::U32 desired = X(32, Rt);
+     const IR::U32 observed = ir.AtomicCompareExchange32(address, expected, desired);
++    X(32, Rs, observed); // SetW supplies architectural zero-extension; ZR discards.
++    return true;
++}
++
++bool TranslatorVisitor::CAS16Orders(bool /*acquire*/, Reg Rs, bool /*release*/, Reg Rn, Reg Rt) {
++    IR::U64 address;
++    if (Rn == Reg::SP) {
++        address = SP(64);
++    } else {
++        address = X(64, Rn);
++    }
++    const IR::U32 expected = X(32, Rs);
++    const IR::U32 desired = X(32, Rt);
++    const IR::U32 observed = ir.AtomicCompareExchange16(address, expected, desired);
++    X(32, Rs, observed); // SetW supplies architectural zero-extension; ZR discards.
++    return true;
++}
++
++bool TranslatorVisitor::CAS8Orders(bool /*acquire*/, Reg Rs, bool /*release*/, Reg Rn, Reg Rt) {
++    IR::U64 address;
++    if (Rn == Reg::SP) {
++        address = SP(64);
++    } else {
++        address = X(64, Rn);
++    }
++    const IR::U32 expected = X(32, Rs);
++    const IR::U32 desired = X(32, Rt);
++    const IR::U32 observed = ir.AtomicCompareExchange8(address, expected, desired);
+     X(32, Rs, observed); // SetW supplies architectural zero-extension; ZR discards.
+     return true;
+ }
+--- a/src/dynarmic/src/dynarmic/frontend/A64/a64_ir_emitter.h
++++ b/src/dynarmic/src/dynarmic/frontend/A64/a64_ir_emitter.h
+@@ -131,6 +131,18 @@
+                             ImmCurrentLocationDescriptor(), address, expected, desired);
+     }
+ 
++    IR::U32 AtomicCompareExchange16(const IR::U64& address, const IR::U32& expected,
++                                    const IR::U32& desired) noexcept {
++        return Inst<IR::U32>(Opcode::A64AtomicCompareExchange16,
++                            ImmCurrentLocationDescriptor(), address, expected, desired);
++    }
++
++    IR::U32 AtomicCompareExchange8(const IR::U64& address, const IR::U32& expected,
++                                    const IR::U32& desired) noexcept {
++        return Inst<IR::U32>(Opcode::A64AtomicCompareExchange8,
++                            ImmCurrentLocationDescriptor(), address, expected, desired);
++    }
++
+     IR::U64 AtomicCompareExchange64(const IR::U64& address, const IR::U64& expected,
+                                     const IR::U64& desired) noexcept {
+         return Inst<IR::U64>(Opcode::A64AtomicCompareExchange64,
+--- a/src/dynarmic/src/dynarmic/ir/opcodes.inc
++++ b/src/dynarmic/src/dynarmic/ir/opcodes.inc
+@@ -792,3 +792,5 @@
+ A64OPC(AtomicExchange64, U64, U64, U64, U64)
+ A64OPC(AtomicFetchXor32, U32, U64, U64, U32)
+ A64OPC(AtomicExchange32, U32, U64, U64, U32)
++A64OPC(AtomicCompareExchange8, U32, U64, U64, U32, U32)
++A64OPC(AtomicCompareExchange16, U32, U64, U64, U32, U32)
+--- a/src/dynarmic/src/dynarmic/ir/opcodes.h
++++ b/src/dynarmic/src/dynarmic/ir/opcodes.h
+@@ -78,6 +78,8 @@
+     case Opcode::A64DataMemoryBarrier:
+     case Opcode::A64DataSynchronizationBarrier:
+     case Opcode::A64AtomicCompareExchange32:
++    case Opcode::A64AtomicCompareExchange16:
++    case Opcode::A64AtomicCompareExchange8:
+     case Opcode::A64AtomicCompareExchange64:
+     case Opcode::A64AtomicFetchAdd32:
+     case Opcode::A64AtomicExchange32:
+@@ -180,12 +182,12 @@
+ 
+ /// @brief Determines whether or not this instruction performs any kind of memory read.
+ constexpr bool IsMemoryRead(const Opcode op) noexcept {
+-    return op == Opcode::A64AtomicCompareExchange32 || op == Opcode::A64AtomicCompareExchange64 || op == Opcode::A64AtomicFetchAdd32 || op == Opcode::A64AtomicExchange32 || op == Opcode::A64AtomicFetchXor32 || op == Opcode::A64AtomicExchange64 || op == Opcode::A64AtomicFetchXor64 || op == Opcode::A64AtomicFetchClear64 || op == Opcode::A64AtomicFetchOr64 || op == Opcode::A64AtomicFetchAdd64 || op == Opcode::A64AtomicFetchClear32 || op == Opcode::A64AtomicFetchOr32 || IsSharedMemoryRead(op) || IsExclusiveMemoryRead(op);
++    return op == Opcode::A64AtomicCompareExchange32 || op == Opcode::A64AtomicCompareExchange16 || op == Opcode::A64AtomicCompareExchange8 || op == Opcode::A64AtomicCompareExchange64 || op == Opcode::A64AtomicFetchAdd32 || op == Opcode::A64AtomicExchange32 || op == Opcode::A64AtomicFetchXor32 || op == Opcode::A64AtomicExchange64 || op == Opcode::A64AtomicFetchXor64 || op == Opcode::A64AtomicFetchClear64 || op == Opcode::A64AtomicFetchOr64 || op == Opcode::A64AtomicFetchAdd64 || op == Opcode::A64AtomicFetchClear32 || op == Opcode::A64AtomicFetchOr32 || IsSharedMemoryRead(op) || IsExclusiveMemoryRead(op);
+ }
+ 
+ /// @brief Determines whether or not this instruction performs any kind of memory write.
+ constexpr bool IsMemoryWrite(const Opcode op) noexcept {
+-    return op == Opcode::A64AtomicCompareExchange32 || op == Opcode::A64AtomicCompareExchange64 || op == Opcode::A64AtomicFetchAdd32 || op == Opcode::A64AtomicExchange32 || op == Opcode::A64AtomicFetchXor32 || op == Opcode::A64AtomicExchange64 || op == Opcode::A64AtomicFetchXor64 || op == Opcode::A64AtomicFetchClear64 || op == Opcode::A64AtomicFetchOr64 || op == Opcode::A64AtomicFetchAdd64 || op == Opcode::A64AtomicFetchClear32 || op == Opcode::A64AtomicFetchOr32 || IsSharedMemoryWrite(op) || IsExclusiveMemoryWrite(op);
++    return op == Opcode::A64AtomicCompareExchange32 || op == Opcode::A64AtomicCompareExchange16 || op == Opcode::A64AtomicCompareExchange8 || op == Opcode::A64AtomicCompareExchange64 || op == Opcode::A64AtomicFetchAdd32 || op == Opcode::A64AtomicExchange32 || op == Opcode::A64AtomicFetchXor32 || op == Opcode::A64AtomicExchange64 || op == Opcode::A64AtomicFetchXor64 || op == Opcode::A64AtomicFetchClear64 || op == Opcode::A64AtomicFetchOr64 || op == Opcode::A64AtomicFetchAdd64 || op == Opcode::A64AtomicFetchClear32 || op == Opcode::A64AtomicFetchOr32 || IsSharedMemoryWrite(op) || IsExclusiveMemoryWrite(op);
+ }
+ 
+ /// @brief Determines whether or not this instruction performs any kind of memory access.
+--- a/src/dynarmic/src/dynarmic/ir/opt_passes.cpp
++++ b/src/dynarmic/src/dynarmic/ir/opt_passes.cpp
+@@ -554,6 +554,8 @@
+         auto const opcode = inst->GetOpcode();
+         switch (opcode) {
+         case IR::Opcode::A64AtomicCompareExchange32:
++        case IR::Opcode::A64AtomicCompareExchange16:
++        case IR::Opcode::A64AtomicCompareExchange8:
+         case IR::Opcode::A64AtomicCompareExchange64:
+         case IR::Opcode::A64AtomicFetchAdd32:
+         case IR::Opcode::A64AtomicExchange32:
+--- a/src/dynarmic/src/dynarmic/interface/A64/config.h
++++ b/src/dynarmic/src/dynarmic/interface/A64/config.h
+@@ -144,6 +144,17 @@
+         VAddr, std::uint64_t, std::uint64_t, Dynarmic::ExclusiveMonitor*) {
+         return std::nullopt;
+     }
++
++    // Appended narrow slots. Rebuild every callback producer/consumer coherently.
++    virtual std::optional<std::uint8_t> MemoryAtomicCompareExchange8(
++        VAddr, std::uint8_t, std::uint8_t, Dynarmic::ExclusiveMonitor*) {
++        return std::nullopt;
++    }
++
++    virtual std::optional<std::uint16_t> MemoryAtomicCompareExchange16(
++        VAddr, std::uint16_t, std::uint16_t, Dynarmic::ExclusiveMonitor*) {
++        return std::nullopt;
++    }
+ };
+ 
+ struct UserConfig {
+--- a/src/dynarmic/src/dynarmic/backend/x64/a64_emit_x64.cpp
++++ b/src/dynarmic/src/dynarmic/backend/x64/a64_emit_x64.cpp
+@@ -125,6 +125,16 @@
+             EmitA64AtomicCompareExchange32(ctx, &inst);
+             goto finish_this_inst;
+         }
++
++        if (opcode == IR::Opcode::A64AtomicCompareExchange16) {
++            EmitA64AtomicCompareExchange16(ctx, &inst);
++            goto finish_this_inst;
++        }
++
++        if (opcode == IR::Opcode::A64AtomicCompareExchange8) {
++            EmitA64AtomicCompareExchange8(ctx, &inst);
++            goto finish_this_inst;
++        }
+         if (opcode == IR::Opcode::A64AtomicFetchAdd32) {
+             EmitA64AtomicFetchAdd32(ctx, &inst);
+             goto finish_this_inst;
+--- a/src/dynarmic/src/dynarmic/backend/x64/a64_emit_x64_memory.cpp
++++ b/src/dynarmic/src/dynarmic/backend/x64/a64_emit_x64_memory.cpp
+@@ -370,6 +370,90 @@
+     EmitCheckMemoryAbort(ctx, inst);
+ }
+ 
++void A64EmitX64::EmitA64AtomicCompareExchange16(A64EmitContext& ctx, IR::Inst* inst) {
++    auto args = ctx.reg_alloc.GetArgumentInfo(inst);
++    ctx.reg_alloc.HostCall(code, inst, {}, args[1], args[2], args[3]);
++#ifdef EDEN_SHARED_JIT_LAYOUT
++    // Shared compiled blocks must use the executing JIT's callback, monitor and
++    // abort target, never the emitter/group owner's captured first-core state.
++    code.mov(code.ABI_PARAM1, code.ABI_JIT_PTR);
++    code.CallLambda([](A64JitState& state, A64::VAddr address, u32 expected, u32 desired) -> u32 {
++        const auto* config = static_cast<const A64::UserConfig*>(state.eden_conf);
++        auto* callbacks = static_cast<A64::UserCallbacks*>(state.eden_callbacks);
++        // eden_jit points to private Jit::Impl, not the public A64::Jit wrapper.
++        // Halt the actual executing state directly with the same atomic primitive
++        // that Impl::HaltExecution uses; never reinterpret its private pointer.
++        if (!config || !callbacks || !state.eden_jit) {
++            std::fputs("CPU_TRACE cas16_runtime_context_missing action=abort_no_fake_success\n", stderr);
++            std::abort();
++        }
++        const auto observed = callbacks->MemoryAtomicCompareExchange16(
++            address, static_cast<u16>(expected), static_cast<u16>(desired), config->global_monitor);
++        if (!observed) {
++            Atomic::Or(&state.halt_reason, static_cast<u32>(HaltReason::MemoryAbort));
++            return 0;
++        }
++        return *observed;
++    });
++#else
++    code.mov(code.ABI_PARAM1, reinterpret_cast<u64>(this));
++    code.CallLambda([](A64EmitX64& emitter, A64::VAddr address, u32 expected, u32 desired) -> u32 {
++        // The callback prepares VM/cache state before acquiring the monitor.
++        // Never hold the monitor across a guest-aware validation callback.
++        const auto observed = emitter.conf.callbacks->MemoryAtomicCompareExchange16(
++            address, static_cast<u16>(expected), static_cast<u16>(desired), emitter.conf.global_monitor);
++        if (!observed) {
++            emitter.jit_interface->HaltExecution(HaltReason::MemoryAbort);
++            return 0; // Not architecturally written: the mandatory check exits first.
++        }
++        return *observed;
++    });
++#endif
++    EmitCheckMemoryAbort(ctx, inst);
++}
++
++void A64EmitX64::EmitA64AtomicCompareExchange8(A64EmitContext& ctx, IR::Inst* inst) {
++    auto args = ctx.reg_alloc.GetArgumentInfo(inst);
++    ctx.reg_alloc.HostCall(code, inst, {}, args[1], args[2], args[3]);
++#ifdef EDEN_SHARED_JIT_LAYOUT
++    // Shared compiled blocks must use the executing JIT's callback, monitor and
++    // abort target, never the emitter/group owner's captured first-core state.
++    code.mov(code.ABI_PARAM1, code.ABI_JIT_PTR);
++    code.CallLambda([](A64JitState& state, A64::VAddr address, u32 expected, u32 desired) -> u32 {
++        const auto* config = static_cast<const A64::UserConfig*>(state.eden_conf);
++        auto* callbacks = static_cast<A64::UserCallbacks*>(state.eden_callbacks);
++        // eden_jit points to private Jit::Impl, not the public A64::Jit wrapper.
++        // Halt the actual executing state directly with the same atomic primitive
++        // that Impl::HaltExecution uses; never reinterpret its private pointer.
++        if (!config || !callbacks || !state.eden_jit) {
++            std::fputs("CPU_TRACE cas8_runtime_context_missing action=abort_no_fake_success\n", stderr);
++            std::abort();
++        }
++        const auto observed = callbacks->MemoryAtomicCompareExchange8(
++            address, static_cast<u8>(expected), static_cast<u8>(desired), config->global_monitor);
++        if (!observed) {
++            Atomic::Or(&state.halt_reason, static_cast<u32>(HaltReason::MemoryAbort));
++            return 0;
++        }
++        return *observed;
++    });
++#else
++    code.mov(code.ABI_PARAM1, reinterpret_cast<u64>(this));
++    code.CallLambda([](A64EmitX64& emitter, A64::VAddr address, u32 expected, u32 desired) -> u32 {
++        // The callback prepares VM/cache state before acquiring the monitor.
++        // Never hold the monitor across a guest-aware validation callback.
++        const auto observed = emitter.conf.callbacks->MemoryAtomicCompareExchange8(
++            address, static_cast<u8>(expected), static_cast<u8>(desired), emitter.conf.global_monitor);
++        if (!observed) {
++            emitter.jit_interface->HaltExecution(HaltReason::MemoryAbort);
++            return 0; // Not architecturally written: the mandatory check exits first.
++        }
++        return *observed;
++    });
++#endif
++    EmitCheckMemoryAbort(ctx, inst);
++}
++
+ void A64EmitX64::EmitA64AtomicCompareExchange64(A64EmitContext& ctx, IR::Inst* inst) {
+     auto args = ctx.reg_alloc.GetArgumentInfo(inst);
+     ctx.reg_alloc.HostCall(code, inst, {}, args[1], args[2], args[3]);
+@@ -963,6 +1047,8 @@
+ 
+ void A64EmitX64::EmitCheckMemoryAbort(A64EmitContext&, IR::Inst* inst, Xbyak::Label* end) {
+     if (!conf.check_halt_on_memory_access && inst->GetOpcode() != IR::Opcode::A64AtomicCompareExchange32 &&
++        inst->GetOpcode() != IR::Opcode::A64AtomicCompareExchange16 &&
++        inst->GetOpcode() != IR::Opcode::A64AtomicCompareExchange8 &&
+         inst->GetOpcode() != IR::Opcode::A64AtomicFetchAdd32 &&
+         inst->GetOpcode() != IR::Opcode::A64AtomicExchange32 &&
+         inst->GetOpcode() != IR::Opcode::A64AtomicFetchXor32 &&
+--- a/src/core/memory.h
++++ b/src/core/memory.h
+@@ -151,6 +151,8 @@
+     // Prepares read-download and possible-write coherence outside kernel and
+     // exclusive-monitor locks. Caller must revalidate/pin VM lifetime before CAS.
+     u32* PrepareAtomicPointer32(Common::ProcessAddress vaddr);
++    u16* PrepareAtomicPointer16(Common::ProcessAddress vaddr);
++    u8* PrepareAtomicPointer8(Common::ProcessAddress vaddr);
+     u64* PrepareAtomicPointer64(Common::ProcessAddress vaddr);
+ 
+     template <typename T>
+--- a/src/core/memory.cpp
++++ b/src/core/memory.cpp
+@@ -660,6 +660,28 @@
+         return reinterpret_cast<u32*>(pointer);
+     }
+ 
++    u16* PrepareAtomicPointer16(Common::ProcessAddress vaddr) {
++        const u64 address = GetInteger(vaddr);
++        if ((address & 1) != 0) return nullptr;
++        u8* pointer = GetPointerImpl(address, []() {}, [&]() {
++            HandleRasterizerDownload(address, sizeof(u16));
++            HandleRasterizerWrite(address, sizeof(u16));
++        });
++        if (!pointer || (reinterpret_cast<uintptr_t>(pointer) & 1) != 0) return nullptr;
++        return reinterpret_cast<u16*>(pointer);
++    }
++
++    u8* PrepareAtomicPointer8(Common::ProcessAddress vaddr) {
++        const u64 address = GetInteger(vaddr);
++        if ((address & 0) != 0) return nullptr;
++        u8* pointer = GetPointerImpl(address, []() {}, [&]() {
++            HandleRasterizerDownload(address, sizeof(u8));
++            HandleRasterizerWrite(address, sizeof(u8));
++        });
++        if (!pointer || (reinterpret_cast<uintptr_t>(pointer) & 0) != 0) return nullptr;
++        return reinterpret_cast<u8*>(pointer);
++    }
++
+     u64* PrepareAtomicPointer64(Common::ProcessAddress vaddr) {
+         const u64 address = GetInteger(vaddr);
+         if ((address & 7) != 0) return nullptr;
+@@ -866,6 +888,14 @@
+     return impl->PrepareAtomicPointer32(vaddr);
+ }
+ 
++u16* Memory::PrepareAtomicPointer16(Common::ProcessAddress vaddr) {
++    return impl->PrepareAtomicPointer16(vaddr);
++}
++
++u8* Memory::PrepareAtomicPointer8(Common::ProcessAddress vaddr) {
++    return impl->PrepareAtomicPointer8(vaddr);
++}
++
+ u64* Memory::PrepareAtomicPointer64(Common::ProcessAddress vaddr) {
+     return impl->PrepareAtomicPointer64(vaddr);
+ }
+--- a/src/core/hle/kernel/k_page_table_base.h
++++ b/src/core/hle/kernel/k_page_table_base.h
+@@ -313,6 +313,50 @@
+     }
+ 
+     template<typename Function>
++    bool WithAtomicAccess16(KProcessAddress address, u16* prepared_pointer,
++                            const char*& rejection, Function operation) {
++        if ((GetInteger(address) & 1) != 0) { rejection = "alignment"; return false; }
++        if (!this->Contains(address, sizeof(u16))) { rejection = "span"; return false; }
++        KScopedLightLock lock(m_general_lock);
++        const auto* block = m_memory_block_manager.FindBlock(address);
++        if (!block) { rejection = "mapping"; return false; }
++        const auto info = block->GetMemoryInfo();
++        if (GetInteger(address) + sizeof(u16) > info.GetEndAddress() ||
++            (info.GetPermission() & KMemoryPermission::UserReadWrite) != KMemoryPermission::UserReadWrite ||
++            !True(info.GetState() & KMemoryState::FlagLinearMapped)) {
++            rejection = "permission"; return false;
++        }
++        if (!prepared_pointer ||
++            m_memory->GetPointerSilent(address) != reinterpret_cast<u8*>(prepared_pointer)) {
++            rejection = "mapping_changed"; return false;
++        }
++        operation();
++        return true;
++    }
++
++    template<typename Function>
++    bool WithAtomicAccess8(KProcessAddress address, u8* prepared_pointer,
++                            const char*& rejection, Function operation) {
++        if ((GetInteger(address) & 0) != 0) { rejection = "alignment"; return false; }
++        if (!this->Contains(address, sizeof(u8))) { rejection = "span"; return false; }
++        KScopedLightLock lock(m_general_lock);
++        const auto* block = m_memory_block_manager.FindBlock(address);
++        if (!block) { rejection = "mapping"; return false; }
++        const auto info = block->GetMemoryInfo();
++        if (GetInteger(address) + sizeof(u8) > info.GetEndAddress() ||
++            (info.GetPermission() & KMemoryPermission::UserReadWrite) != KMemoryPermission::UserReadWrite ||
++            !True(info.GetState() & KMemoryState::FlagLinearMapped)) {
++            rejection = "permission"; return false;
++        }
++        if (!prepared_pointer ||
++            m_memory->GetPointerSilent(address) != reinterpret_cast<u8*>(prepared_pointer)) {
++            rejection = "mapping_changed"; return false;
++        }
++        operation();
++        return true;
++    }
++
++    template<typename Function>
+     bool WithAtomicAccess64(KProcessAddress address, u64* prepared_pointer,
+                             const char*& rejection, Function operation) {
+         if ((GetInteger(address) & 7) != 0) { rejection = "alignment"; return false; }
+--- a/src/core/arm/dynarmic/arm_dynarmic_64.h
++++ b/src/core/arm/dynarmic/arm_dynarmic_64.h
+@@ -52,6 +52,10 @@
+     bool MemoryWriteExclusive128(u64 vaddr, Dynarmic::A64::Vector value, Dynarmic::A64::Vector expected) override;
+     std::optional<u32> MemoryAtomicCompareExchange32(
+         u64 address, u32 expected, u32 desired, Dynarmic::ExclusiveMonitor* monitor) override;
++    std::optional<u16> MemoryAtomicCompareExchange16(
++        u64 address, u16 expected, u16 desired, Dynarmic::ExclusiveMonitor* monitor) override;
++    std::optional<u8> MemoryAtomicCompareExchange8(
++        u64 address, u8 expected, u8 desired, Dynarmic::ExclusiveMonitor* monitor) override;
+     std::optional<u64> MemoryAtomicCompareExchange64(
+         u64 address, u64 expected, u64 desired, Dynarmic::ExclusiveMonitor* monitor) override;
+     void InstructionCacheOperationRaised(Dynarmic::A64::InstructionCacheOperation op, u64 value) override;
+--- a/src/core/arm/dynarmic/arm_dynarmic_64.cpp
++++ b/src/core/arm/dynarmic/arm_dynarmic_64.cpp
+@@ -136,6 +136,78 @@
+     return observed;
+ }
+ 
++std::optional<u16> DynarmicCallbacks64::MemoryAtomicCompareExchange16(
++    u64 address, u16 expected, u16 desired, Dynarmic::ExclusiveMonitor* monitor) {
++    auto reject = [&](const char* reason) -> std::optional<u16> {
++        LOG_CRITICAL(Core_ARM, "CAS16 rejected address={:#x}, reason={}", address, reason);
++#ifdef PROSPERO_CPU_TRACE
++        std::fprintf(stderr, "CPU_TRACE cas16_rejected address=%016llx reason=%s action=memory_abort_no_writeback\n",
++                     static_cast<unsigned long long>(address), reason);
++        std::fflush(stderr);
++#endif
++        return std::nullopt;
++    };
++    if ((address & 1) != 0) return reject("alignment");
++    if (address > std::numeric_limits<u64>::max() - sizeof(u16) ||
++        !m_memory.IsValidVirtualAddressRange(address, sizeof(u16))) return reject("span_or_unmapped");
++    if (!monitor) return reject("monitor");
++    if (!CheckMemoryAccess(address, sizeof(u16), Kernel::DebugWatchpointType::Read) ||
++        !CheckMemoryAccess(address, sizeof(u16), Kernel::DebugWatchpointType::Write))
++        return reject("watchpoint_or_memory_access");
++    // GPU/cache preparation may block, so it happens before page/monitor locks.
++    u16* pointer = m_memory.PrepareAtomicPointer16(address);
++    if (!pointer) return reject("coherence_pointer");
++    u16 observed = 0;
++    const char* rejection = "mapping";
++    const bool performed = m_process->GetPageTable().GetBasePageTable().WithAtomicAccess16(
++        address, pointer, rejection, [&]() {
++            monitor->DoAtomicOperation([&]() {
++                // One genuine typed 16-bit host seq_cst CAS; no wider overlapping atomic.
++                // Exactly one atomic returns the old value on both match/failure.
++                (void)Common::AtomicCompareAndSwap(pointer, desired, expected, observed);
++            });
++        });
++    // Kernel page lock and monitor are both released before diagnostics.
++    if (!performed) return reject(rejection);
++    return observed;
++}
++
++std::optional<u8> DynarmicCallbacks64::MemoryAtomicCompareExchange8(
++    u64 address, u8 expected, u8 desired, Dynarmic::ExclusiveMonitor* monitor) {
++    auto reject = [&](const char* reason) -> std::optional<u8> {
++        LOG_CRITICAL(Core_ARM, "CAS8 rejected address={:#x}, reason={}", address, reason);
++#ifdef PROSPERO_CPU_TRACE
++        std::fprintf(stderr, "CPU_TRACE cas8_rejected address=%016llx reason=%s action=memory_abort_no_writeback\n",
++                     static_cast<unsigned long long>(address), reason);
++        std::fflush(stderr);
++#endif
++        return std::nullopt;
++    };
++    if ((address & 0) != 0) return reject("alignment");
++    if (address > std::numeric_limits<u64>::max() - sizeof(u8) ||
++        !m_memory.IsValidVirtualAddressRange(address, sizeof(u8))) return reject("span_or_unmapped");
++    if (!monitor) return reject("monitor");
++    if (!CheckMemoryAccess(address, sizeof(u8), Kernel::DebugWatchpointType::Read) ||
++        !CheckMemoryAccess(address, sizeof(u8), Kernel::DebugWatchpointType::Write))
++        return reject("watchpoint_or_memory_access");
++    // GPU/cache preparation may block, so it happens before page/monitor locks.
++    u8* pointer = m_memory.PrepareAtomicPointer8(address);
++    if (!pointer) return reject("coherence_pointer");
++    u8 observed = 0;
++    const char* rejection = "mapping";
++    const bool performed = m_process->GetPageTable().GetBasePageTable().WithAtomicAccess8(
++        address, pointer, rejection, [&]() {
++            monitor->DoAtomicOperation([&]() {
++                // One genuine typed 8-bit host seq_cst CAS; no wider overlapping atomic.
++                // Exactly one atomic returns the old value on both match/failure.
++                (void)Common::AtomicCompareAndSwap(pointer, desired, expected, observed);
++            });
++        });
++    // Kernel page lock and monitor are both released before diagnostics.
++    if (!performed) return reject(rejection);
++    return observed;
++}
++
+ std::optional<u64> DynarmicCallbacks64::MemoryAtomicCompareExchange64(
+     u64 address, u64 expected, u64 desired, Dynarmic::ExclusiveMonitor* monitor) {
+     auto reject = [&](const char* reason) -> std::optional<u64> {

@@ -1,0 +1,26 @@
+GPU memory manager: addresses past the address space are unmapped
+
+MemoryManager::GetEntry indexed its entry tables with any address. A garbage GPU address from a
+command stream ran past the table and faulted, on the GPU threads:
+- OOT on the console, nx2:vi2 guest wait: IsFullyMappedRange on 0x0308e4210a33cb00, GPUBack;
+- on the PC: a garbage acquire address, 0x54f00000000 + 0x1000.
+Every page lookup and range operation (MemoryOperation, so reads, writes, IsFullyMappedRange,
+MaxContinuousRange) asks GetEntry first. An address at or past the address space size now reads
+as Free, so callers take their unmapped path, as GpuToCpuAddress already did. One compare per
+lookup.
+
+--- a/src/video_core/memory_manager.cpp
++++ b/src/video_core/memory_manager.cpp
+@@ -71,6 +71,12 @@
+ MemoryManager::~MemoryManager() = default;
+ 
+ MemoryManager::EntryType MemoryManager::GetEntry(size_t position, bool is_big_page) const {
++    // An address past the address space is unmapped. Every range operation (MemoryOperation, so
++    // IsFullyMappedRange, reads, writes) asks here first: a garbage GPU address from a command
++    // stream (0x0308e4210a33cb00 in an OOT run) indexed past the entry table and faulted.
++    if (position >= address_space_size) [[unlikely]] {
++        return EntryType::Free;
++    }
+     if (is_big_page) {
+         position = position >> big_page_bits;
+         const u64 entry_mask = big_entries[position / 32];
