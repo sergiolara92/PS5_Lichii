@@ -3313,9 +3313,14 @@ ${paths_source}")
     string(REPLACE "${old_tsc_fallback}" "        }" features_source "${features_source}")
     # Eglantine estimates after the leaves when nothing was found (its AMD case): the same place,
     # so only its condition widens to the port's (a reading under 1 GHz is no TSC rate either).
+    set(no_leaf_tsc_fallback "    if (max_std_fn < 0x15 && caps.invariant_tsc && caps.tsc_frequency == 0) {\n")
+    string(FIND "${features_source}" "${no_leaf_tsc_fallback}" no_leaf_tsc_offset)
     set(zero_tsc_fallback "    if (caps.invariant_tsc && caps.tsc_frequency == 0) {\n")
     string(FIND "${features_source}" "${zero_tsc_fallback}" zero_tsc_offset)
-    if(zero_tsc_offset GREATER_EQUAL 0)
+    if(no_leaf_tsc_offset GREATER_EQUAL 0)
+        string(REPLACE "${no_leaf_tsc_fallback}" "    if (caps.invariant_tsc && caps.tsc_frequency < 1'000'000'000ULL) {\n"
+            features_source "${features_source}")
+    elseif(zero_tsc_offset GREATER_EQUAL 0)
         string(REPLACE "${zero_tsc_fallback}" "    if (caps.invariant_tsc && caps.tsc_frequency < 1'000'000'000ULL) {\n"
             features_source "${features_source}")
     else()
