@@ -438,7 +438,7 @@ void Launcher::draw_language(Canvas &c)
 void Launcher::draw_about(Canvas &c)
 {
     gfx::DrawList &list = c.list;
-    draw_frame(c, tr("About ProsperoEden"), tr("Credits and setup"));
+    draw_frame(c, tr("About PS5Lichii"), tr("Credits and setup"));
     const EmulatorDiagnostic core = services_.emulator_diagnostic();
     const auto draw_core = [&](float x, float y, float width)
     {
@@ -482,7 +482,8 @@ void Launcher::draw_about(Canvas &c)
         {
             text(c, tr("PS5 EDITION"), x, baseline(488.0f, 28.0f, t.size_small), t.size_small,
                  t.accent_pale, Align::left, 2.0f);
-            text_block(c, tr("ProsperoEden is an unofficial PS5 port brought to you by BlackBearReloaded."),
+            text_block(c, tr("PS5Lichii is an unofficial PS5 port based on ProsperoEden, "
+                             "brought to you by BlackBearReloaded."),
                        x, baseline(520.0f, 30.0f, t.size_text), t.size_text, 30.0f, t.body, w, 2, kShrink);
         }
         list.rounded_rect({x, 592.0f, w, 1.0f}, 0.0f, t.rule);
@@ -541,7 +542,8 @@ void Launcher::draw_about(Canvas &c)
     list.rounded_rect({144.0f, 628.0f, 748.0f, 1.0f}, 0.0f, th().rule);
     text(c, tr("PS5 EDITION"), 144.0f, baseline(648.0f, 30.0f, th().size_small), th().size_small,
          th().accent_pale, Align::left, 2.0f);
-    text_block(c, tr("ProsperoEden is an unofficial PS5 port brought to you by BlackBearReloaded."),
+    text_block(c, tr("PS5Lichii is an unofficial PS5 port based on ProsperoEden, "
+                     "brought to you by BlackBearReloaded."),
                144.0f, baseline(684.0f, 36.0f, th().size_text), th().size_text, 36.0f, th().body,
                748.0f, 2, kShrink);
     text_shrink(c, tr("Menu sound effects made with ElevenLabs."), 144.0f,

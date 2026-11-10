@@ -55,7 +55,7 @@ def check():
     assert all(not (APP / p).is_symlink() and (APP / p).stat().st_size for p in REQUIRED)
     param = json.loads((APP / 'sce_sys/param.json').read_text())
     assert param['titleId'] == 'PPSA99009' and param['contentId'].endswith('PROSPEROEDEN0001')
-    assert param['localizedParameters']['en-US']['titleName'] == 'ProsperoEden'
+    assert param['localizedParameters']['en-US']['titleName'] == 'PS5Lichii'
     assert param['pubtools']['loudnessSnd0'] == '-28.00'
     lapy = json.loads((APP / 'lapy-manifest.json').read_text())
     assert lapy['schema'] == 'lapy-owned-build/1'

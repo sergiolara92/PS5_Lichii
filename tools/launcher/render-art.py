@@ -165,6 +165,7 @@ def main():
     if "brand" in wanted:
         icon = Image.open(ROOT / "sce_sys/icon-source.png").convert("RGBA")
         save_tga(icon.resize((384, 384), Image.Resampling.LANCZOS), "brand.tga")
+        icon.resize((512, 512), Image.Resampling.LANCZOS).convert("RGB").save(ROOT / "sce_sys/icon0.png")
     if "controller" in wanted:
         save_tga(controller(), "controller.tga")
 
