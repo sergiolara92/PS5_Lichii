@@ -37,8 +37,8 @@ mkdir -p "$scratch/ffmpeg-native"
 cd "$scratch/ffmpeg-native"
 # Use the same pinned, minimal decoder set as the Linux core, plus AV1 through dav1d. Avoid the
 # full prebuilt FFmpeg package's unrelated codec and C++ runtime dependencies.
-# meson puts dav1d.pc where the target (freebsd) keeps them: libdata/pkgconfig.
-PKG_CONFIG_LIBDIR="$dav1d/install/libdata/pkgconfig" PKG_CONFIG_PATH= \
+# The explicit libdir above puts dav1d.pc in lib/pkgconfig.
+PKG_CONFIG_LIBDIR="$dav1d/install/lib/pkgconfig" PKG_CONFIG_PATH= \
 bash "$source/configure" --prefix="$scratch/ffmpeg-native/install" \
     --enable-cross-compile --arch=x86_64 --target-os=freebsd \
     --cc="bash $root/tools/ffmpeg-ps5-cc.sh" --ld="bash $root/tools/ffmpeg-ps5-cc.sh" \
