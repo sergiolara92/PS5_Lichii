@@ -15,12 +15,14 @@ code=r'''
 #include <semaphore>
 #include <thread>
 using u64=unsigned long long;
-struct Worker {std::thread t;std::atomic_bool stopping{};void Stop(){stopping=true;if(t.joinable())t.join();}void TickGPU(bool){}void Run(std::function<void()>&&,bool){}};
+struct Worker {std::thread t;std::atomic_bool stopping{};void Stop(){stopping=true;if(t.joinable())t.join();}void NotifyShutdown(){Stop();}void TickGPU(bool){}void Run(std::function<void()>&&,bool){}};
+namespace VideoCore::Nx2Debug { inline int Experiment(int) { return 0; } }
 struct GPU {
  std::mutex sync_request_mutex,sync_mutex;
  std::condition_variable sync_request_cv,sync_cv;
  std::list<std::function<void()>> sync_requests;
- bool sync_requests_stopped{},is_async=true;
+ std::atomic_bool has_sync_requests{};
+ bool sync_requests_dropped{},is_async=true;
  std::atomic_bool shutting_down{};
  std::atomic<u64> current_sync_fence{};u64 last_sync_fence{};
  Worker gpu_thread;
@@ -69,7 +71,7 @@ code=r'''
 #include <thread>
 using u32=unsigned;
 struct System{std::atomic_bool stop{};bool IsShuttingDown(){return stop;}};
-struct DMA {System system;std::mutex sync_mutex;std::condition_variable sync_cv;bool synced{};
+struct DMA {System system;std::mutex sync_mutex;std::condition_variable sync_cv;std::atomic_bool synced{};
 bool Wait(){
 '''+wait+r'''
  return true;}
@@ -77,6 +79,7 @@ bool Wait(){
 struct Memory {std::atomic<u32> value{};template<class T>T Read(unsigned){return value.load();}};
 struct Raster {std::atomic_uint calls{};void ReleaseFences(){++calls;}};
 struct DmaPusher {System system;Memory memory_manager;Raster raster;Raster*rasterizer=&raster;};
+void ReleaseFences(DmaPusher& dma_pusher){dma_pusher.rasterizer->ReleaseFences();}
 void DrainBack(){} // Eglantine's split GPU thread: off here, as on the console at High accuracy
 struct Puller {struct Regs {struct Address{unsigned SemaphoreAddress(){return 0;}}semaphore_address;u32 semaphore_acquire=4,acquire_value{};bool acquire_active{},acquire_mode{},acquire_source{};}regs;
 void ProcessSemaphoreAcquire(DmaPusher&dma_pusher){
