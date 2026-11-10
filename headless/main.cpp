@@ -1718,8 +1718,7 @@ int main(int argc, char** argv) {
             const int speed_percent = Eden::kSpeedLimitPercent[speed.speed_limit];
             Settings::values.use_speed_limit.SetValue(speed_percent > 0);
             Settings::values.speed_limit.SetValue(static_cast<u16>(speed_percent > 0 ? speed_percent : 100));
-            // The block list is off unless the settings turn it on (block-list.txt in the app
-            // folder still does, further down).
+            // The block list follows its setting (on by default; block-list.txt also enables it).
             if (!dev_block_list) Eden::JitList::enabled = speed.block_list;
             // Set for every session: the value outlives one.
             Settings::values.vertex_input_dynamic_state.SetValue(dev_vertex_input != 0);
