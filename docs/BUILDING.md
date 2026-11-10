@@ -106,6 +106,9 @@ Next to this repository (`../`), as git checkouts:
 
 - **ps5-native-app-boilerplate**: the PS5 Payload SDK v0.42, the runtime `libc.prx` and the
   native packaging tool;
+- **PS5_MihawkGen** at `../mihawk-framegen-review`: required to build every PS5 app package;
+  `make deps` fetches it at the pinned revision. Its weights are bundled, while frame generation
+  remains off by default.
 - **Mihawk's PS5_Vulkan, PS5_Mesa and PS5_PayloadSDK** (`../mihawk-*-review`): RADV and its
   build recipe. `make prepare` builds RADV once and isolates it beside the OpenGL Mesa
   (`tools/isolate-radv.py`). RADV's display code carries this repository's adaptation

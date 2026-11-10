@@ -1,6 +1,12 @@
 if(NOT PS5_NATIVE)
     message(FATAL_ERROR "EDEN_PS5_VULKAN requires PS5_NATIVE")
 endif()
+# Mihawk's neural frame generation (PS5_MihawkGen).
+set(MIHAWKGEN_ROOT "${PROSPERO_SIBLINGS}/mihawk-framegen-review")
+option(EDEN_PS5_MIHAWKGEN "Build MihawkGen neural frame generation" ON)
+if(EDEN_PS5_MIHAWKGEN AND NOT EXISTS "${MIHAWKGEN_ROOT}/framegen/include/framegen.h")
+    message(FATAL_ERROR "MihawkGen is required for PS5 builds but was not found at ${MIHAWKGEN_ROOT}")
+endif()
 # Eden's Lossless Scaling frame generation. Upstream gates it behind ENABLE_LSFG,
 # which cmake_dependent_option pins to the "ANDROID" condition (CMakeLists.txt:
 # "Only Android"), so -DENABLE_LSFG=ON alone is silently forced back OFF. Enable
@@ -155,8 +161,6 @@ endif()
 # volk routes through function pointers loaded from RADV at init time. The wrapper
 # (headless/mihawkgen.cpp) calls volkInitializeCustom + volkLoadDevice before making
 # the context, so the generator sees the same device as Eden's renderer.
-set(MIHAWKGEN_ROOT "${PROSPERO_SIBLINGS}/mihawk-framegen-review")
-option(EDEN_PS5_MIHAWKGEN "Build MihawkGen neural frame generation" ON)
 if(EDEN_PS5_MIHAWKGEN AND EXISTS "${MIHAWKGEN_ROOT}/framegen/include/framegen.h")
     set(MIHAWKGEN_VOLK_DIR "${MIHAWKGEN_ROOT}/ps5/third_party/volk")
     set(MIHAWKGEN_VOLK_SOURCES
@@ -189,7 +193,4 @@ if(EDEN_PS5_MIHAWKGEN AND EXISTS "${MIHAWKGEN_ROOT}/framegen/include/framegen.h"
     target_link_libraries(video_core PRIVATE mihawkgen)
     target_compile_definitions(video_core PUBLIC HAS_MIHAWKGEN)
     add_compile_definitions(EDEN_PS5_MIHAWKGEN=1)
-elseif(EDEN_PS5_MIHAWKGEN)
-    message(WARNING "MihawkGen requested but not found at ${MIHAWKGEN_ROOT}")
-    set(EDEN_PS5_MIHAWKGEN OFF)
 endif()

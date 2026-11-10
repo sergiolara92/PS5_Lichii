@@ -80,7 +80,8 @@ cmake -S "$scratch/source" -B "$build_dir" -G Ninja \
     -DENABLE_WERROR=OFF -Dzstd_FORCE_BUNDLED=ON -DBoost_FORCE_BUNDLED=ON -Dfmt_FORCE_BUNDLED=ON \
     -DDYNARMIC_ENABLE_NO_EXECUTE_SUPPORT=ON -DDYNARMIC_IGNORE_ASSERTS=OFF \
     -DSDL_UNIX_CONSOLE_BUILD=ON -DSDL_OPENGL=OFF -DSDL_OPENGLES=OFF -DSDL_RENDER=OFF -DSDL_GPU=OFF \
-    ${EDEN_EXTRA_CMAKE_ARGS:-}
+    ${EDEN_EXTRA_CMAKE_ARGS:-} \
+    -DEDEN_PS5_MIHAWKGEN=ON
 python3 -B "$root/headless/check_slab_lifetime.py" \
     "$build_dir/headless/include/core/hle/kernel/slab_helpers.h" \
     "$scratch/source/src/core/hle/kernel/slab_helpers.h"
