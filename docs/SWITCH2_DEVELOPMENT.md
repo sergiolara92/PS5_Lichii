@@ -63,7 +63,7 @@ EDEN_HOST_VULKAN=1 NS2_RUN_SECONDS=300 tools/run-ns2-host.sh <keys folder> <firm
 - `<firmware folder>` holds the firmware's NCA files.
 - `<game folder>` is a loose dump with `exefs/` (at least `main`) and `romfs/`.
 
-Your files are only read. The app runs in a private bubblewrap sandbox where `/data/prosperoeden`
+Your files are only read. The app runs in a private bubblewrap sandbox where `/data/lichii`
 is the run folder; nothing is written outside the build cache. The run ends after
 `NS2_RUN_SECONDS` (default 120) or at a guest fault.
 
@@ -130,9 +130,9 @@ You need a PS5 able to run homebrew, with an FTP server (port 2121), an ELF load
 klog (port 3232); see [INSTALL.md](INSTALL.md).
 
 ```bash
-make ns2-dev                    # development build that boots Mario Kart World: build/dev/PPSA99008
-make ns2                        # the packaged build with the launcher: build/release/PPSA99008
-make install PS5_HOST=<console address> APP=build/dev/PPSA99008
+make ns2-dev                    # development build that boots Mario Kart World: build/dev/PPSA99009
+make ns2                        # the packaged build with the launcher: build/release/PPSA99009
+make install PS5_HOST=<console address> APP=build/dev/PPSA99009
 ```
 
 Close ProsperoEden on the console before installing. `DEV_TITLE=<16-digit title ID>` makes
@@ -142,12 +142,12 @@ Close ProsperoEden on the console before installing. `DEV_TITLE=<16-digit title 
 
 | Path | What |
 |---|---|
-| `/data/prosperoeden/keys/` | `prod.keys` (and `title.keys`) |
-| `/data/prosperoeden/firmware/` | the firmware NCAs |
-| `/data/prosperoeden/roms/<game>/` | the loose dump (`exefs/`, `romfs/`) and its `<name>.eden` descriptor |
-| `/data/prosperoeden/logs/` | `stderr.log`, `boot-trace.txt`, `crash-<time>.txt` and the logs kept with each crash |
-| `/data/prosperoeden/user/log/eden_log.txt` | the emulator's log |
-| `/data/homebrew/PPSA99008/` | the installed app |
+| `/data/lichii/keys/` | `prod.keys` (and `title.keys`) |
+| `/data/lichii/firmware/` | the firmware NCAs |
+| `/data/lichii/roms/<game>/` | the loose dump (`exefs/`, `romfs/`) and its `<name>.eden` descriptor |
+| `/data/lichii/logs/` | `stderr.log`, `boot-trace.txt`, `crash-<time>.txt` and the logs kept with each crash |
+| `/data/lichii/user/log/eden_log.txt` | the emulator's log |
+| `/data/homebrew/PPSA99009/` | the installed app |
 
 A Switch 2 game file (`.xci`, `.nup`, or an `.nsp` whose title ID starts with `04`) in `roms/` or a
 game folder there is started as it is: `ReadResearchDescriptor` (research_descriptor.cpp) builds the
@@ -160,22 +160,22 @@ a file alone cannot carry (`"nup_update": false`):
   "schema": 1,
   "enabled": true,
   "mode": "execute",
-  "exefs": "/data/prosperoeden/roms/<game>/exefs",
-  "romfs": { "kind": "loose", "path": "/data/prosperoeden/roms/<game>/romfs" },
+  "exefs": "/data/lichii/roms/<game>/exefs",
+  "romfs": { "kind": "loose", "path": "/data/lichii/roms/<game>/romfs" },
   "required_modules": ["rtld", "main", "subsdk0", "sdk"]
 }
 ```
 
-A game card image works in place of the extracted folders: `"xci": "/data/prosperoeden/roms/<game>/<game>.xci"`
+A game card image works in place of the extracted folders: `"xci": "/data/lichii/roms/<game>/<game>.xci"`
 instead of `exefs` and `romfs`. ExeFS and RomFS then come from its program NCA, decrypted with the
-keys in `/data/prosperoeden/keys` as the game reads them, so no RomFS is built from a folder at
+keys in `/data/lichii/keys` as the game reads them, so no RomFS is built from a folder at
 start (Mario Kart World on the Pro: the game loaded at 52 s instead of 157 s).
 
 Two more single-file forms work the same way, one key instead of `exefs` and `romfs`:
 
-- `"nsp": "/data/prosperoeden/roms/<game>/<game>.nsp"`: a submission package, its program NCA's
+- `"nsp": "/data/lichii/roms/<game>/<game>.nsp"`: a submission package, its program NCA's
   ExeFS and RomFS (the base game; an update in its own NSP is not applied).
-- `"nup": "/data/prosperoeden/roms/<game>/<game>.nup"`: a NUP container. The program comes from its
+- `"nup": "/data/lichii/roms/<game>/<game>.nup"`: a NUP container. The program comes from its
   newest update (else its base), the RomFS is the update's over the base's; add
   `"nup_update": false` to boot the base alone. Add-on content inside it is not loaded yet.
 
@@ -190,7 +190,7 @@ the two.
 
 ### Controlling a development build remotely
 
-A development build reads two files in its app folder (`/data/homebrew/PPSA99008/`), so a test can
+A development build reads two files in its app folder (`/data/homebrew/PPSA99009/`), so a test can
 be driven over FTP without touching the controller:
 
 - `compat-input.txt`: `<id> <mask> <milliseconds> [lx ly rx ry]` presses the PS5 buttons in `mask`

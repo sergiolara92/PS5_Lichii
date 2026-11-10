@@ -2,10 +2,10 @@
   "schema": 1,
   "enabled": false,
   "mode": "load-only",
-  "exefs": "/data/prosperoeden/roms/mariokartworldgame/base/exefs",
+  "exefs": "/data/lichii/roms/mariokartworldgame/base/exefs",
   "romfs": {
     "kind": "loose",
-    "path": "/data/prosperoeden/roms/mariokartworldgame/base/romfs"
+    "path": "/data/lichii/roms/mariokartworldgame/base/romfs"
   },
   "required_modules": ["rtld", "main", "subsdk0", "sdk"],
   "profiles": {

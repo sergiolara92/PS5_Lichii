@@ -714,7 +714,7 @@ is understood).
   ticks, so the JIT pushed stack bytes forever. Real code loops like this only in infinite recursion (the fork's
   LinkBlockFast B/BL already allow unchecked infinite loops). Generator: rewrite targets call nothing. EDEN_DIFF_PRINT_EACH=1
   prints each case first (found it at iteration 7607 of seed 77181).
-- Console jcb-1..10 INVALID: gcache's ml-on-2 runner died in the restart and left PPSA99008 running with the lock free;
+- Console jcb-1..10 INVALID: gcache's ml-on-2 runner died in the restart and left PPSA99009 running with the lock free;
   dkb refused to launch but had installed pkg-0181-oot over the running title first. dkb-console-run.sh now checks
   procs before installing. jq-jcb2 reruns the 10 boots once the console is idle.
 - Cold-cache sweep (EDEN_BENCH_COLD=<MiB> written before each window; jc-oot11 full stack, s+w cycles/guest, quiet

@@ -31,8 +31,8 @@ export LLVM_CONFIG ?= /usr/bin/llvm-config
 endif
 
 PYTHON := python3 -B
-RELEASE_APP := build/release/PPSA99008
-# make install: which build goes to the console (APP=build/dev/PPSA99008 for make dev / ns2-dev).
+RELEASE_APP := build/release/PPSA99009
+# make install: which build goes to the console (APP=build/dev/PPSA99009 for make dev / ns2-dev).
 APP ?= $(RELEASE_APP)
 
 .PHONY: help release package ns2 ns2-dev ns2-host dev prepare deps deps-status toolchain test install clean distclean
@@ -50,7 +50,7 @@ help: ## List the targets and variables
 release: package ## Release files in dist/: ZIP, SHA256SUMS, release notes (default)
 	$(PYTHON) tools/ci/make-dist.py $(RELEASE_APP)
 
-package: prepare ## Build the app as released: build/release/PPSA99008
+package: prepare ## Build the app as released: build/release/PPSA99009
 	bash tools/build-package.sh release
 
 # The only source: Frizti/Fritchii v5.5 (4012e52, an Eden-derived Switch 2 emulator, tools/deps.json) plus
@@ -68,7 +68,7 @@ ns2-dev: ## make dev for DEV_TITLE (Mario Kart World by default); FAST=1: no Thi
 ns2-host: prepare ## Linux (PC) build: build/ns2-host/eden-headless
 	bash tools/build-ns2-host.sh
 
-dev: prepare ## Development build that boots DEV_TITLE: build/dev/PPSA99008
+dev: prepare ## Development build that boots DEV_TITLE: build/dev/PPSA99009
 	@[[ -n "$(DEV_TITLE)" ]] || { echo 'Set DEV_TITLE=<16-digit title ID> (or write it to .local/dev-profile-title)'; exit 2; }
 	EDEN_FAST_BUILD=$(if $(FAST),1,0) bash tools/build-package.sh dev $(DEV_TITLE)
 
@@ -88,7 +88,7 @@ test: prepare ## Host (Linux) build of the emulator and its test suites (ROMM_CH
 	bash tools/check-elevation-client.sh
 	bash tools/build-headless-host.sh
 
-install: ## Copy build/release/PPSA99008 (or APP=...) to a console over FTP (PS5_HOST=<address>)
+install: ## Copy build/release/PPSA99009 (or APP=...) to a console over FTP (PS5_HOST=<address>)
 	@[[ -n "$(PS5_HOST)" ]] || { echo 'Set PS5_HOST=<console address>'; exit 2; }
 	$(PYTHON) tools/install-ftp.py $(PS5_HOST) $(APP) --port $(PS5_PORT)
 

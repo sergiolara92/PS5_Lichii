@@ -7,7 +7,7 @@ Branche proposée : `sw2-ns2-test-20261029`. Build PS5 correspondante : eboot.bi
 
 | Fichier | Changement |
 |---|---|
-| `headless/main.cpp` | `/data/prosperoeden/debug-env.txt` (variables KEY=VALUE pour une session, ex. `EDEN_LOG_FILTER`, `EDEN_HOST_SVC_TRACE`) ; `EDEN_LOG_FILTER` aussi sur PS5 ; options de diagnostic pour la simulation Linux (12 Gio, sans CRAM). |
+| `headless/main.cpp` | `/data/lichii/debug-env.txt` (variables KEY=VALUE pour une session, ex. `EDEN_LOG_FILTER`, `EDEN_HOST_SVC_TRACE`) ; `EDEN_LOG_FILTER` aussi sur PS5 ; options de diagnostic pour la simulation Linux (12 Gio, sans CRAM). |
 | `headless/mock_devices.cpp`, `headless/mock_devices.h` | Recréés (absents de l'instantané) : pad, utilisateur, audio et fichiers pour la simulation Linux, trace de crash, vidage du log sur SIGTERM. |
 | `headless/inject.cmake` | Option `EDEN_HOST_RESEARCH_PROFILE` (couche recherche dans la build Linux). |
 | `headless/research/direct-loader-prototype/research_execution_profile.h`, `research_frontend.cpp` | Profil mémoire strict et 12 Gio pour **tout jeu Switch 2** (ID 04…), plus seulement Mario Kart World. |

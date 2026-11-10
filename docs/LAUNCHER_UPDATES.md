@@ -99,12 +99,12 @@ Keep generated ZIPs and feeds outside the pack folder. Do not put application ex
 ## Storage, limits and recovery
 
 ```text
-/data/prosperoeden/launchers/<id>/                     installed pack
-/data/prosperoeden/config/launcher-state/<id>.json     existing pack state, untouched
-/data/prosperoeden/config/launcher-updates.json        automatic-check preference and timestamps
-/data/prosperoeden/launcher-updates/work/<id>/         temporary staging
-/data/prosperoeden/launcher-updates/backups/<id>/      previous pack version
-/data/prosperoeden/launcher-updates/transactions/      replacement journals
+/data/lichii/launchers/<id>/                     installed pack
+/data/lichii/config/launcher-state/<id>.json     existing pack state, untouched
+/data/lichii/config/launcher-updates.json        automatic-check preference and timestamps
+/data/lichii/launcher-updates/work/<id>/         temporary staging
+/data/lichii/launcher-updates/backups/<id>/      previous pack version
+/data/lichii/launcher-updates/transactions/      replacement journals
 ```
 
 Downloads are bounded to 128 MiB, expanded contents to 256 MiB, individual files to 64 MiB and archives to 4096 entries. Extraction streams to staging files, checks CRCs and SHA-256, and rejects traversal, absolute paths, duplicate entries, symbolic links, special files, encryption and unsupported ZIP methods. Resource paths and Lua source syntax are checked before replacement; fonts and decoded artwork are also validated when the runtime activates the pack.

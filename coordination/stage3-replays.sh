@@ -6,7 +6,7 @@
 set -u
 C=/home/mihawk/Desktop/PS5_Homebrews/PS5_Lichii/coordination
 pre=${1:?prefix}; off=${2:?off env}; pairs=${3:-3}
-CAP=/data/prosperoeden/captures/mkw-race-5.bin
+CAP=/data/lichii/captures/mkw-race-5.bin
 BASE="gpu_accuracy=low cram_fine=on cram_dedup=on"
 res=$C/runs/$pre.res; : > $res
 run() {  # run <tag> <settings...>
@@ -24,8 +24,8 @@ f=ftplib.FTP(); f.connect(__import__("os").environ["PS5_HOST"],2121,timeout=30);
 for i in range(1, 22):
     n=f"replay-rt-{i}.ppm"
     try:
-        with open(os.path.join(sys.argv[1], n),"wb") as o: f.retrbinary("RETR /data/prosperoeden/logs/"+n, o.write)
-        try: f.delete("/data/prosperoeden/logs/"+n)
+        with open(os.path.join(sys.argv[1], n),"wb") as o: f.retrbinary("RETR /data/lichii/logs/"+n, o.write)
+        try: f.delete("/data/lichii/logs/"+n)
         except ftplib.all_errors: pass
     except ftplib.all_errors as e: print(n, e)
 f.quit()

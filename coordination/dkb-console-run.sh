@@ -6,7 +6,7 @@
 # logs and prints every 5 s window's fps and draws per frame (dkb-windows.py).
 set -u
 C=/home/mihawk/Desktop/PS5_Homebrews/PS5_Lichii/coordination
-: "${PS5_HOST:?set PS5_HOST to the console address}"; export PS5_HOST; HOST=$PS5_HOST; APP=/data/homebrew/PPSA99008
+: "${PS5_HOST:?set PS5_HOST to the console address}"; export PS5_HOST; HOST=$PS5_HOST; APP=/data/homebrew/PPSA99009
 tag=${1:?tag}; checkout=$(realpath ${2:?checkout}); MEASURE=${3:-90}; NAV=${NAV:-300}; shift 3 2>/dev/null || shift $#
 DEV_SETTINGS="${*:-gpu_accuracy=low cram_fine=on cram_dedup=on}"
 out=$C/runs/$tag; mkdir -p $out
@@ -31,24 +31,24 @@ PY
 procs=$(cd /home/mihawk/Desktop/PS5_Homebrews/PS5_Vulkan && PS5_HOST=$HOST timeout 60 python3 -c \
     'import sys; sys.path.insert(0, "tools"); import ps5_console as c; print(c.ps5vkctl_command(c.load_settings(), "procs", timeout=20))' 2>&1)
 case " $procs " in *" count=0 "*) ;; *) echo "the console is running an application ($procs); not installing"; exit 1;; esac
-cd "$checkout" && timeout 900 make install PS5_HOST=$HOST APP=${INSTALL_APP:-build/dev/PPSA99008} > $out/install.log 2>&1 || { echo "INSTALL FAILED"; exit 1; }
+cd "$checkout" && timeout 900 make install PS5_HOST=$HOST APP=${INSTALL_APP:-build/dev/PPSA99009} > $out/install.log 2>&1 || { echo "INSTALL FAILED"; exit 1; }
 for n in compat-input.txt quit-app.txt capture-once.txt; do ftp rm $APP/$n 2>/dev/null; done
-ftp rm /data/prosperoeden/logs/crash-note.txt 2>/dev/null
+ftp rm /data/lichii/logs/crash-note.txt 2>/dev/null
 # The last session's heap.log stays until this one writes its own: the polls would read it.
-ftp rm /data/prosperoeden/logs/heap.log 2>/dev/null
+ftp rm /data/lichii/logs/heap.log 2>/dev/null
 ftp put $APP/dev-settings.txt "$DEV_SETTINGS"
 # LIVE_AB="name=a|b" (LIVE_PERIOD s, default 20): while measuring, the live switch file (headless/live_switches.inc)
 # alternates arm A (name=a) and B (name=b) in ABBA order; livestat.py gives the paired verdict at the end. Use with
 # MEASURE=300 or so. A/A check: name=v|v. LIVE_FIXED="a=1 b=2": switches written with every period (both arms).
-LIVE=/data/prosperoeden/live-switches.txt
+LIVE=/data/lichii/live-switches.txt
 ftp rm $LIVE 2>/dev/null
 cd /home/mihawk/Desktop/PS5_Homebrews/PS5_Vulkan
-PS5_HOST=$HOST timeout 1500 python3 tools/run-title.py PPSA99008 --until 'Userspace PANIC' --timeout 1400 \
+PS5_HOST=$HOST timeout 1500 python3 tools/run-title.py PPSA99009 --until 'Userspace PANIC' --timeout 1400 \
     --output $out/klog.log > $out/run.out 2>&1 &
 runner=$!
 id=$(date +%s)
 press() { id=$((id + 1)); ftp put $APP/compat-input.txt "$id $1 $2"; }
-windows() { ftp get /data/prosperoeden/logs/heap.log $out/heap.poll 2>/dev/null; grep -a "^EDEN_VULKAN_FRAME" $out/heap.poll 2>/dev/null | sed -E 's/.*fps=([0-9.]+).*/\1/'; }
+windows() { ftp get /data/lichii/logs/heap.log $out/heap.poll 2>/dev/null; grep -a "^EDEN_VULKAN_FRAME" $out/heap.poll 2>/dev/null | sed -E 's/.*fps=([0-9.]+).*/\1/'; }
 started=$(date +%s); phase=title
 # Title and navigation poll every NAV_EVERY s (default 10 as before; 2 cuts boot-to-gameplay: each menu step waits a loop); measuring
 # keeps 10 s. BOOT_ONLY=<s>: navigate (A presses) but quit that long after the first frame (boot-crash hunting, no measure).
@@ -112,7 +112,7 @@ while kill -0 $runner 2>/dev/null; do
     fi
 done
 wait $runner
-for n in heap:/data/prosperoeden/logs/heap.log stderr:/data/prosperoeden/logs/stderr.log eden_log:/data/prosperoeden/user/log/eden_log.txt; do
+for n in heap:/data/lichii/logs/heap.log stderr:/data/lichii/logs/stderr.log eden_log:/data/lichii/user/log/eden_log.txt; do
     ftp get ${n#*:} $out/${n%%:*}.txt
 done
 ftp rm $APP/dev-settings.txt 2>/dev/null

@@ -2,7 +2,7 @@
 # One GPU replay on the Pro (notes/gpu-replay.md): install a checkout's dev build, replay a capture
 # already on the console instead of the game, and print the replay's result lines.
 #   replay-run.sh <tag> <checkout> <capture on the console> [DEV_SETTINGS words...]
-# e.g. replay-run.sh r1 ../ProsperoEden /data/prosperoeden/captures/mkw-race-3.bin
+# e.g. replay-run.sh r1 ../ProsperoEden /data/lichii/captures/mkw-race-3.bin
 # Shares runs/console.lock with console-run.sh: one run at a time on the Pro.
 set -u
 C=/home/mihawk/Desktop/PS5_Homebrews/PS5_Lichii/coordination
@@ -32,8 +32,8 @@ until ! reserved_for_other && ! compgen -G "$C/runs/priority.want.*" > /dev/null
 rm -f "$ticket"
 echo "console lock taken: $tag (replay $capture)" | tee -a "$C/runs/console.log"
 cd "$checkout" || exit 1
-[[ -d build/dev/PPSA99008 ]] || { echo "no build/dev/PPSA99008 in $checkout (make ns2-dev)"; exit 1; }
-timeout 900 make install PS5_HOST=$HOST APP=build/dev/PPSA99008 > $out/install.log 2>&1 || { echo "INSTALL FAILED"; exit 1; }
+[[ -d build/dev/PPSA99009 ]] || { echo "no build/dev/PPSA99009 in $checkout (make ns2-dev)"; exit 1; }
+timeout 900 make install PS5_HOST=$HOST APP=build/dev/PPSA99009 > $out/install.log 2>&1 || { echo "INSTALL FAILED"; exit 1; }
 ftp() {  # ftp put NAME TEXT | ftp get REMOTE LOCAL | ftp rm REMOTE
     timeout 60 python3 -I - "$@" <<'PY'
 import ftplib, io, sys
@@ -48,29 +48,29 @@ except ftplib.all_errors as e: print(f"ftp {op} {sys.argv[2]}: {e}", file=sys.st
 f.quit()
 PY
 }
-APP=/data/homebrew/PPSA99008
+APP=/data/homebrew/PPSA99009
 ftp rm $APP/compat-input.txt 2>/dev/null; ftp rm $APP/quit-app.txt 2>/dev/null
 # A crash notice from an earlier run would open the launcher instead of the replay.
-ftp rm /data/prosperoeden/logs/crash-note.txt 2>/dev/null
+ftp rm /data/lichii/logs/crash-note.txt 2>/dev/null
 ftp put $APP/dev-settings.txt "$DEV_SETTINGS"
 cd /home/mihawk/Desktop/PS5_Homebrews/PS5_Vulkan
 # The replay shuts the emulated system down and ends the title once it has printed its result, so
 # the run ends when the title exits (run-title.py's kill at the timeout is only the watchdog). The
 # result is in the app's stderr.log, not in the klog: a poll reads it, and after a crash (the app
 # restarts into the launcher) sends the launcher's quit at once instead of waiting for the timeout.
-PS5_HOST=$HOST timeout 900 python3 tools/run-title.py PPSA99008 \
+PS5_HOST=$HOST timeout 900 python3 tools/run-title.py PPSA99009 \
     --until 'EDEN_GUEST_EXCEPTION|Userspace PANIC' \
     --timeout 840 --output $out/klog.log > $out/run.out 2>&1 &
 runner=$!
 while kill -0 $runner 2>/dev/null; do
     sleep 15
-    ftp get /data/prosperoeden/logs/stderr.log $out/stderr.poll 2>/dev/null
+    ftp get /data/lichii/logs/stderr.log $out/stderr.poll 2>/dev/null
     if grep -aq "after_crash=1" $out/stderr.poll 2>/dev/null && ! grep -aq "quit sent" $out/run.note 2>/dev/null; then
         ftp put $APP/quit-app.txt "quit $(date +%s%N)"; echo "quit sent (crash)" >> $out/run.note
     fi
 done
 wait $runner
-for n in stderr:/data/prosperoeden/logs/stderr.log eden_log:/data/prosperoeden/user/log/eden_log.txt; do
+for n in stderr:/data/lichii/logs/stderr.log eden_log:/data/lichii/user/log/eden_log.txt; do
     ftp get ${n#*:} $out/${n%%:*}.txt
 done
 ftp rm $APP/dev-settings.txt 2>/dev/null

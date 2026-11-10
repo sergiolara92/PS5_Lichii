@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # fetch-save.py <console host> <title id> <destination>: copies a title's save folder from the
-# console (/data/prosperoeden/user/nand/user/save/0000000000000000/<profile>/<title>) to the PC, for
+# console (/data/lichii/user/nand/user/save/0000000000000000/<profile>/<title>) to the PC, for
 # backups before tests touch it. The first profile holding the title is taken.
 import ftplib
 import os
@@ -11,7 +11,7 @@ f = ftplib.FTP()
 f.connect(host, 2121, timeout=30)
 f.login()
 f.voidcmd('TYPE I')
-base = '/data/prosperoeden/user/nand/user/save/0000000000000000'
+base = '/data/lichii/user/nand/user/save/0000000000000000'
 
 
 def ls(path):

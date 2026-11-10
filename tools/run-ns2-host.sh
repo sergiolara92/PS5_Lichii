@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Runs a game in the Linux build of the Switch 2 tree (make ns2-host), on the PC:
 #   tools/run-ns2-host.sh <keys folder> <firmware NCA folder> <game folder with exefs/ and romfs/, or .xci/.nsp/.nup>
-# Your files are only read. The app expects /data/prosperoeden, so it runs in a private sandbox
+# Your files are only read. The app expects /data/lichii, so it runs in a private sandbox
 # (bubblewrap, no root) where that path is a folder of this checkout's build cache; nothing is
 # created outside it. Diagnostics come from the environment as on the console (EDEN_LOG_FILTER,
 # EDEN_HOST_SVC_TRACE, EDEN_GUEST_PROBE, ...). Output: <run>/stderr.log and <run>/user/log/.
@@ -14,10 +14,10 @@ set -euo pipefail
 [[ $# -eq 3 ]] || { sed -n 3,4p "$0" >&2; exit 2; }
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 keys=$(realpath "$1") firmware=$(realpath "$2") game=$(realpath "$3")
-mount=/data/prosperoeden/roms/game
+mount=/data/lichii/roms/game
 # A single-file game (card image, submission package or NUP) is mounted as one file.
 single=false
-case $game in *.xci|*.nsp|*.nup) single=true; mount=/data/prosperoeden/roms/game.${game##*.} ;; esac
+case $game in *.xci|*.nsp|*.nup) single=true; mount=/data/lichii/roms/game.${game##*.} ;; esac
 for need in "$keys/prod.keys" "$($single && echo "$game" || echo "$game/exefs/main")"; do [[ -f $need ]] || { echo "Missing $need" >&2; exit 2; }; done
 # NS2_BINARY: another build of this checkout (a PGO training or ASan build).
 binary="${NS2_BINARY:-$root/build/ns2-host/eden-headless}"
@@ -53,10 +53,10 @@ if [[ -n ${EDEN_HOST_VULKAN:-} ]]; then
 fi
 bwrap --ro-bind /usr /usr --symlink usr/lib /lib --symlink usr/lib64 /lib64 --symlink usr/bin /bin \
     --symlink usr/sbin /sbin --ro-bind /etc /etc --proc /proc --dev /dev --tmpfs /tmp \
-    --ro-bind "$binary" /app/eden-headless --bind "$run" /work --bind "$run/data" /data/prosperoeden \
-    --ro-bind "$keys" /data/prosperoeden/keys --ro-bind "$keys" /work/user/keys \
+    --ro-bind "$binary" /app/eden-headless --bind "$run" /work --bind "$run/data" /data/lichii \
+    --ro-bind "$keys" /data/lichii/keys --ro-bind "$keys" /work/user/keys \
     --ro-bind "$game" "$mount" --chdir /work --die-with-parent "${gpu[@]}" \
-    ${NS2_WRAPPER:-} /app/eden-headless /data/prosperoeden/roms/game.eden --game 2> "$run/stderr.log" &
+    ${NS2_WRAPPER:-} /app/eden-headless /data/lichii/roms/game.eden --game 2> "$run/stderr.log" &
 pid=$!
 # A guest fault halts the emulated CPU but not the app: end the run once its backtrace is out,
 # or after NS2_RUN_SECONDS (default 120) of running.

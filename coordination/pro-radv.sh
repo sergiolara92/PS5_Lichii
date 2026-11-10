@@ -11,11 +11,11 @@ T=${1:?tag}; PAIRS=${2:-3}
 cd $C
 # The queued SMT runs install build/dev too: wait until they are done.
 until grep -q "b3r-done" runs/sc-smtr.sh.out 2>/dev/null; do sleep 30; done
-use() { rm -rf $S/build/dev/PPSA99008; cp -a --reflink=auto $S/build/pkg-$1/PPSA99008 $S/build/dev/; }
+use() { rm -rf $S/build/dev/PPSA99009; cp -a --reflink=auto $S/build/pkg-$1/PPSA99009 $S/build/dev/; }
 for i in 1 2; do
     for arm in o2 o3; do
         t=$T-rep-$arm-$i; use $arm
-        ./replay-run.sh $t $S /data/prosperoeden/captures/mkw-race-5.bin gpu_accuracy=low cram_fine=on cram_dedup=on > runs/$t.out 2>&1
+        ./replay-run.sh $t $S /data/lichii/captures/mkw-race-5.bin gpu_accuracy=low cram_fine=on cram_dedup=on > runs/$t.out 2>&1
         echo "$t $(grep -a -h 'second half (1050\|split: the GPU' runs/$t.out runs/$t/*.txt 2>/dev/null | sort -u | tr '\n' ' ' | cut -c1-300)" | tee -a runs/$T.res
     done
 done

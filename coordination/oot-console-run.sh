@@ -9,7 +9,7 @@
 # OOT_MOVE=1: while measuring, keep walking forward and back with the camera panning (3 s steps).
 set -u
 C=/home/mihawk/Desktop/PS5_Homebrews/PS5_Lichii/coordination
-: "${PS5_HOST:?set PS5_HOST to the console address}"; export PS5_HOST; HOST=$PS5_HOST; APP=/data/homebrew/PPSA99008
+: "${PS5_HOST:?set PS5_HOST to the console address}"; export PS5_HOST; HOST=$PS5_HOST; APP=/data/homebrew/PPSA99009
 tag=${1:?tag}; checkout=$(realpath ${2:?checkout}); MEASURE=${3:-100}; shift 3 2>/dev/null || shift $#
 DEV_SETTINGS="${*:-gpu_accuracy=low cram_fine=on cram_dedup=on}"
 out=$C/runs/$tag; mkdir -p $out
@@ -32,16 +32,16 @@ except ftplib.all_errors as e: print(f"ftp {op} {sys.argv[3]}: {e}", file=sys.st
 f.quit()
 PY
 }
-cd "$checkout" && timeout 900 make install PS5_HOST=$HOST APP=build/dev/PPSA99008 > $out/install.log 2>&1 || { echo "INSTALL FAILED"; exit 1; }
+cd "$checkout" && timeout 900 make install PS5_HOST=$HOST APP=build/dev/PPSA99009 > $out/install.log 2>&1 || { echo "INSTALL FAILED"; exit 1; }
 for n in compat-input.txt quit-app.txt capture-once.txt; do ftp rm $APP/$n 2>/dev/null; done
-ftp rm /data/prosperoeden/logs/crash-note.txt 2>/dev/null
+ftp rm /data/lichii/logs/crash-note.txt 2>/dev/null
 # The last session's heap.log stays until this one writes its own: the polls would read it.
-ftp rm /data/prosperoeden/logs/heap.log 2>/dev/null
+ftp rm /data/lichii/logs/heap.log 2>/dev/null
 # The same for the other logs fetched at the end: a session that never started showed the last one's (fritchii-36).
-ftp rm /data/prosperoeden/logs/stderr.log 2>/dev/null; ftp rm /data/prosperoeden/user/log/eden_log.txt 2>/dev/null
+ftp rm /data/lichii/logs/stderr.log 2>/dev/null; ftp rm /data/lichii/user/log/eden_log.txt 2>/dev/null
 ftp put $APP/dev-settings.txt "$DEV_SETTINGS"
 cd /home/mihawk/Desktop/PS5_Homebrews/PS5_Vulkan
-PS5_HOST=$HOST timeout 1500 python3 tools/run-title.py PPSA99008 --until 'Userspace PANIC' --timeout 1400 \
+PS5_HOST=$HOST timeout 1500 python3 tools/run-title.py PPSA99009 --until 'Userspace PANIC' --timeout 1400 \
     --output $out/klog.log > $out/run.out 2>&1 &
 runner=$!
 id=$(date +%s)
@@ -49,7 +49,7 @@ press() { id=$((id + 1)); ftp put $APP/compat-input.txt "$id $1 $2"; }
 # The console's log as it is, kept in $out/heap.poll only while it has at least as many frame windows as
 # the copy before (a crash restarts the app, which starts its log again).
 windows() {
-    ftp get /data/prosperoeden/logs/heap.log $out/heap.fresh 2>/dev/null
+    ftp get /data/lichii/logs/heap.log $out/heap.fresh 2>/dev/null
     # grep -c prints 0 and fails on no match, so "|| echo 0" made "0 0"; a missing file prints nothing.
     local fresh polled
     fresh=$(grep -a -c "^EDEN_VULKAN_FRAME" $out/heap.fresh 2>/dev/null); polled=$(grep -a -c "^EDEN_VULKAN_FRAME" $out/heap.poll 2>/dev/null)
@@ -66,7 +66,7 @@ while kill -0 $runner 2>/dev/null; do
         # The title screen: two 60 fps windows after the intro, or (a heavier title scene from a later save runs
         # under 60) 45 s after the title video started (vdecsvc configure in the game log).
         if [[ -z ${video_at:-} ]]; then
-            ftp get /data/prosperoeden/user/log/eden_log.txt $out/eden.poll 2>/dev/null
+            ftp get /data/lichii/user/log/eden_log.txt $out/eden.poll 2>/dev/null
             grep -aq "vdecsvc configure" $out/eden.poll 2>/dev/null && video_at=$now
         fi
         if [[ $(windows | awk '$1 >= 55' | wc -l) -ge 2 ]] || { [[ -n ${video_at:-} ]] && (( now - video_at >= 45 )); }; then
@@ -81,8 +81,8 @@ while kill -0 $runner 2>/dev/null; do
             echo "gameplay at $((now - started)) s"; echo "$n" > $out/gameplay-window  # the summary starts here
             # OOT_CAPTURE=1: the frame where gameplay starts (before any route), as $out/spawn.ppm.
             if [[ -n ${OOT_CAPTURE:-} ]]; then
-                ftp rm /data/prosperoeden/logs/game-frame.ppm 2>/dev/null; ftp put $APP/capture-once.txt "1"; sleep 12
-                ftp get /data/prosperoeden/logs/game-frame.ppm $out/spawn.ppm 2>/dev/null
+                ftp rm /data/lichii/logs/game-frame.ppm 2>/dev/null; ftp put $APP/capture-once.txt "1"; sleep 12
+                ftp get /data/lichii/logs/game-frame.ppm $out/spawn.ppm 2>/dev/null
             fi
             if [[ -n ${OOT_ROUTE:-} ]]; then
                 IFS=';' read -ra steps <<< "$OOT_ROUTE"
@@ -125,7 +125,7 @@ while kill -0 $runner 2>/dev/null; do
     fi
 done
 wait $runner
-for n in heap:/data/prosperoeden/logs/heap.log stderr:/data/prosperoeden/logs/stderr.log eden_log:/data/prosperoeden/user/log/eden_log.txt; do
+for n in heap:/data/lichii/logs/heap.log stderr:/data/lichii/logs/stderr.log eden_log:/data/lichii/user/log/eden_log.txt; do
     ftp get ${n#*:} $out/${n%%:*}.txt
 done
 ftp rm $APP/dev-settings.txt 2>/dev/null
