@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img alt="Pre-release v1.00.00" src="https://img.shields.io/badge/release-v1.00.00%20pre--release-orange">
+  <img alt="Pre-release v1.20.00" src="https://img.shields.io/badge/release-v1.20.00%20pre--release-orange">
   <img alt="Base Fritchii v5.5" src="https://img.shields.io/badge/base-Fritchii%20v5.5%20(4012e52)-blue">
   <img alt="Target PS5 Pro" src="https://img.shields.io/badge/target-PS5%20Pro-black">
   <img alt="Renderer Vulkan (RADV)" src="https://img.shields.io/badge/renderer-Vulkan%20%2F%20RADV-red">
@@ -17,6 +17,7 @@
 </p>
 
 <p align="center">
+  <a href="#-thank-you">Thanks</a> ·
   <a href="#-where-it-stands">Status</a> ·
   <a href="#-what-is-in-it">Features</a> ·
   <a href="#-install">Install</a> ·
@@ -49,8 +50,23 @@ Switch 2 game fit at all.
 > [!WARNING]
 > **This is an early pre-release.** One game has been measured end to end (Ocarina of Time on the
 > PS5 Pro). Expect hitches, out-of-memory stops in heavy areas, and games that do not start.
-> It installs as **ProsperoEden (`PPSA99009`)** and replaces a ProsperoEden already installed;
-> settings, saves and game files under `/data/lichii` are shared with it.
+> Since v1.20.00 it installs as **its own title, `PPSA99009`**, with its data in `/data/lichii`: it
+> no longer replaces ProsperoEden or shares its folder. Coming from an earlier pre-release, rename
+> `/data/prosperoeden` to `/data/lichii` before the first start.
+
+## 🤝 Thank you
+
+To the people whose tests, logs and fixes shaped the current release (their reports are in
+[issue #1](https://github.com/mihawk-99/PS5_Lichii/issues/1)):
+
+| Who | What they brought |
+|---|---|
+| [**Vampinity**](https://github.com/Vampinity) | Ocarina of Time on a base PS5, and the causes of three fixes: the light border around the title movie, the rumble that never fired, the intro at about 80% speed. Also why plants can go missing, and the base PS5 freeze reports |
+| [**GrowingBlackBeans**](https://github.com/GrowingBlackBeans) | The trusted command copy, the reading of the crash logs (the 6144x6144 texture, the shared memory pool running short), and the submit thread finding for the graphics driver |
+| [**yokozuna47**](https://github.com/yokozuna47) | PS5 Pro tests of v1.00.00 and v1.10.00 with full logs; the crashes they caught set the memory work of v1.20.00 |
+| [**quatrixone**](https://github.com/quatrixone) | The title ID and data folder of its own, and the release build and check fixes ([#2](https://github.com/mihawk-99/PS5_Lichii/pull/2)) |
+
+The projects this build stands on are in [Credits](#-credits).
 
 ## 📊 Where it stands
 
@@ -80,10 +96,10 @@ feels like, which an average hides.
 |---|---|
 | 🟢 Boots to gameplay | Ocarina of Time and Mario Kart World, on the PS5 Pro |
 | 🟢 No GPU hangs | AMD ASTC decoder edge writes fixed by Fritchii; texture conversion in batches |
-| 🟢 No out-of-memory stops on the measured route | Was the main blocker before this build |
+| 🟡 Out of memory | None on the measured Hyrule Field route; Ocarina of Time can still run out coming into Hyrule Field from Kokiri Forest |
 | 🟡 Hitches | OoT's worst frame down from 2.3 s to 0.62 s, MKW's from 1.16 s to 0.29 s; some stalls remain at area changes |
 | 🟡 30 fps + MihawkGen 60 fps | 30 fps base nearly held; frame generation to 60 is the next goal |
-| 🟡 Known issue | Ocarina of Time draws no flowers on the PS5; the rest of the picture matches Fritchii |
+| 🟡 Known issue | Ocarina of Time's shader cache takes about four minutes to load at every start |
 | ⚪ Other games | Donkey Kong Bananza reached gameplay on an earlier base; not re-measured on Fritchii |
 | ⚪ Base PS5 | Not measured; its smaller memory pool is unlikely to be enough |
 
@@ -155,16 +171,16 @@ build goes into keeping that headroom, without stalling the game:
 
 **Defaults in this build** (the settings run 50 was measured with): **Fast GPU** on, **Compact
 memory** on, **Block list** on. Frame generation is off; turn on **MihawkGen** in
-**Settings > Video > Frame generation** for 60 fps output. The update check is off: the
-homebrew.page entry for `PPSA99009` is upstream ProsperoEden, whose releases would replace this one.
+**Settings > Video > Frame generation** for 60 fps output. The update check is off: this build has
+no entry of its own on homebrew.page yet.
 
 ## 📦 Install
 
 > [!TIP]
 > Use [ShadowMountPlus 1.7beta4](https://github.com/drakmor/ShadowMountPlus/releases/tag/1.7beta4) or newer: it mounts the app and gives it `/data` and your drives.
 
-1. Download `PS5_Lichii-v1.00.00.zip` from the [releases](../../releases) and extract it.
-2. Copy the `PPSA99009` folder to `/data/homebrew/PPSA99009` on the PS5 (close ProsperoEden first).
+1. Download `PS5_Lichii-v1.20.00.zip` from the [releases](../../releases) and extract it.
+2. Copy the `PPSA99009` folder to `/data/homebrew/PPSA99009` on the PS5 (close the app first if it is open).
 3. Put your own `prod.keys` in `/data/lichii/keys/` and your own firmware files in `/data/lichii/firmware/`.
 4. Put each game's file (`.xci`, `.nup` or `.nsp`) in `/data/lichii/roms/`, or in a folder of its own there, then open **Library**.
 
@@ -274,7 +290,7 @@ Console scripts read the console's address from `PS5_HOST`. Notes from the work 
 3. **30 fps held, MihawkGen to 60 fps**, judged by the 1% low, not the average.
 4. **Less memory**: re-evaluating the base against the next Lichii build (announced with large RAM
    savings), and a lower render resolution with FSR as an option.
-5. More games re-measured on this base, and OoT's missing flowers.
+5. More games re-measured on this base.
 
 ## 🙏 Credits
 
@@ -285,6 +301,8 @@ Console scripts read the console's address from `PS5_HOST`. Notes from the work 
 | [Lichii](https://github.com/zortos293/Lichii) by zortos293 | Fritchii's base, and this repository's earlier base |
 | [Eglantine](https://github.com/Djihads80/Eglantine) by Djihads80 | The first Switch 2 base of this work |
 | [Nolar-Hack/Lichii](https://github.com/Nolar-Hack/Lichii) | BC-250 (PS5-class GPU) fixes; the compute-pipeline rebuild is ported from it |
+| [EglantinePS5](https://github.com/heydemoura/EglantinePS5) by heydemoura | The index buffer span cap is ported from it |
+| [Hookshot](https://github.com/NotRexed/Hookshot) by NotRexed | Invariant positions and NaN-guarded colour outputs on AMD are ported from it |
 | [ProsperoEden](https://github.com/blackbearreloaded/ProsperoEden) by BlackBearReloaded and contributors | The PS5 frontend, launcher, packaging and everything around the emulator |
 | [PS5 Native App Boilerplate](https://github.com/blackbearreloaded/ps5-native-app-boilerplate), [ps5-opengl](https://github.com/blackbearreloaded/ps5-opengl) | The native app foundation and the launcher's OpenGL |
 | [PS5 Payload SDK](https://github.com/ps5-payload-dev/sdk) by John Törnblom | The toolchain and system interfaces |
