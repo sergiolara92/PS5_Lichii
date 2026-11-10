@@ -123,8 +123,8 @@ Phase FromKit(self_update_phase phase) {
 } // namespace
 
 void Start() {
-    // PS5_Lichii installs under ProsperoEden's title ID but is a build of its own: the catalog's
-    // ProsperoEden releases would replace it, so it asks the catalog for nothing.
+    // PS5_Lichii has no entry of its own in the catalog (ProsperoEden's releases must never
+    // replace it), so it asks the catalog for nothing.
     // shortcut: no update check until PS5_Lichii has a catalog entry of its own; then remove this.
     constexpr bool kCatalogEntry = false;
     if (!kCatalogEntry) return;

@@ -1,0 +1,83 @@
+hid 213 is SendVibrationValueInMode (17.0.0+): send its vibration value like 201 instead of dropping it,
+which left the DualSense still where Switch 2 games rumble through it (OoT's glowing hand, issue #1).
+
+diff -ru a/src/core/hle/service/hid/hid_server.cpp b/src/core/hle/service/hid/hid_server.cpp
+--- a/src/core/hle/service/hid/hid_server.cpp
++++ b/src/core/hle/service/hid/hid_server.cpp
+@@ -6,6 +6,9 @@
+ 
+ #include <algorithm>
+ #include <array>
++#include <atomic>
++#include <bit>
++#include <cstring>
+ 
+ #include "common/common_types.h"
+ #include "common/logging.h"
+@@ -140,7 +143,7 @@
+         {210, C<&IHidServer::EndPermitVibrationSession>, "EndPermitVibrationSession"},
+         {211, C<&IHidServer::IsVibrationDeviceMounted>, "IsVibrationDeviceMounted"},
+         {212, C<&IHidServer::SendVibrationValueInBool>, "SendVibrationValueInBool"},
+-        {213, C<&IHidServer::Unknown213>, "Unknown213"},
++        {213, C<&IHidServer::SendVibrationValueInMode>, "SendVibrationValueInMode"},
+         {214, C<&IHidServer::SendNx2VibrationValues>, "SendNx2VibrationValues (guessed)"},
+         {220, C<&IHidServer::Unknown220>, "Unknown220"},
+         {300, C<&IHidServer::ActivateConsoleSixAxisSensor>, "ActivateConsoleSixAxisSensor"},
+@@ -1134,8 +1137,39 @@
+     R_SUCCEED();
+ }
+ 
+-Result IHidServer::Unknown213() {
+-    LOG_DEBUG(Service_HID, "(STUBBED) called");
++Result IHidServer::SendVibrationValueInMode(std::array<u32, 8> raw) {
++    // 201's handle and value plus a mode word, with the aruid at byte 24; whether the mode comes
++    // before the handle or after the value is not known, so the layout is the one whose two
++    // frequencies look like frequencies, remembered for calls (stops) whose values are zero.
++    static std::atomic<int> layout{0};
++    const auto hz = [&](std::size_t word) {
++        const f32 value = std::bit_cast<f32>(raw[word]);
++        return value >= 10.0f && value <= 2000.0f;
++    };
++    if (hz(2) && hz(4)) {
++        layout = 0; // handle, value, mode
++    } else if (hz(3) && hz(5)) {
++        layout = 1; // mode, handle, value
++    }
++    const std::size_t at = static_cast<std::size_t>(layout.load());
++    const auto handle = std::bit_cast<Core::HID::VibrationDeviceHandle>(raw[at]);
++    Core::HID::VibrationValue value{};
++    std::memcpy(&value, &raw[at + 1], sizeof(value));
++    const u64 aruid = raw[6] | (u64{raw[7]} << 32);
++    static std::atomic<bool> logged{false};
++    if (!logged.exchange(true)) {
++        LOG_INFO(Service_HID,
++                 "first call, words {:08x} {:08x} {:08x} {:08x} {:08x} {:08x} {:08x} {:08x} "
++                 "-> layout {} handle {}/{}/{} value {}/{} {}/{} aruid {}",
++                 raw[0], raw[1], raw[2], raw[3], raw[4], raw[5], raw[6], raw[7], at,
++                 handle.npad_type, handle.npad_id, handle.device_index, value.low_amplitude,
++                 value.low_frequency, value.high_amplitude, value.high_frequency, aruid);
++    }
++    // Best effort like 214: an unexpected handle must not fail a call the game sends per frame.
++    const auto result = GetResourceManager()->SendVibrationValue(aruid, handle, value);
++    if (result.IsError()) {
++        LOG_DEBUG(Service_HID, "failed to send vibration, result={:#x}", result.raw);
++    }
+     R_SUCCEED();
+ }
+ 
+diff -ru a/src/core/hle/service/hid/hid_server.h b/src/core/hle/service/hid/hid_server.h
+--- a/src/core/hle/service/hid/hid_server.h
++++ b/src/core/hle/service/hid/hid_server.h
+@@ -195,9 +195,9 @@
+         u64 unknown, AppletResourceUserId aruid,
+         InArray<Core::HID::VibrationDeviceHandle, BufferAttr_HipcPointer> vibration_handles,
+         InArray<Core::HID::VibrationValue, BufferAttr_HipcPointer> vibration_values);
+-    // 213 (32 bytes, aruid): sent per controller every frame by Kirby Air Riders (tens of
+-    // thousands of auto stub log lines a run); no reply data. Accepted and dropped.
+-    Result Unknown213();
++    // 213, SendVibrationValueInMode (17.0.0+): one device's vibration, sent per controller every
++    // frame by Kirby Air Riders. 32 bytes of raw data, no reply data.
++    Result SendVibrationValueInMode(std::array<u32, 8> raw);
+     // 220 (16 bytes, aruid): replies one byte (meaning unknown); answer 0 instead of leaving it to
+     // the message buffer's leftovers.
+     Result Unknown220(Out<u8> out);

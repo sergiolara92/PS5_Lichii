@@ -2,6 +2,64 @@
 
 What changed in each release of ProsperoEden, newest first. A release's notes on GitHub are its section here.
 
+## v1.20.00
+
+PS5_Lichii becomes its own title on the console, with its own data folder, and takes in a round of Ocarina of Time picture, memory and start-up fixes, a frame rate limit, and nine ports from the projects around it.
+
+> **Thank you to the people whose tests, logs and fixes are in this release** (their reports are in [issue #1](https://github.com/mihawk-99/PS5_Lichii/issues/1)):
+>
+> - **[Vampinity](https://github.com/Vampinity)**: Ocarina of Time on a base PS5, and the causes of three fixes here: the light border around the title movie, the rumble that never fired, and the intro playing at about 80% speed. Also the reason plants can go missing (mesh draws without a task stage) and the base PS5 freeze reports.
+> - **[GrowingBlackBeans](https://github.com/GrowingBlackBeans)**: the trusted command copy that is in this release, the reading of the crash logs that found the 6144x6144 texture and the shared memory pool running short, and the submit thread finding for the graphics driver.
+> - **[yokozuna47](https://github.com/yokozuna47)**: PS5 Pro tests of v1.00.00 and v1.10.00 with full logs. The crashes they caught (in the pipeline builder, with a shader cache from an older version, out of memory at the save load) set this release's memory work.
+> - **[quatrixone](https://github.com/quatrixone)**: the new title ID and data folder, and the fixes to the release build and its checks ([#2](https://github.com/mihawk-99/PS5_Lichii/pull/2)).
+
+> **Pre-release, and a new identity.** It installs as its own title, `PPSA99009`, and keeps its data in `/data/lichii`. It no longer replaces ProsperoEden or shares its folder. **Coming from v1.00.00 or v1.10.00:** close the app and rename `/data/prosperoeden` to `/data/lichii` before the first start (copy it instead if a ProsperoEden you keep uses that folder); nothing is moved for you. The older build stays installed as `PPSA99008` until you delete it or install ProsperoEden over it.
+
+> **No piracy.** No games, keys or firmware are included, and they never will be. Use only games, keys and firmware you dumped yourself from hardware you own.
+
+Ocarina of Time on the PS5 Pro with this build's code, frame generation off, the last minute of two starts in a row from the save (Link's house and Kokiri Forest):
+
+| Start | Average | Median | 10% low | 1% low |
+|---|---:|---:|---:|---:|
+| First | 29.4 fps | 26.0 fps | 14.4 fps | 5.5 fps |
+| Second | 34.0 fps | 36.4 fps | 14.4 fps | 3.2 fps |
+
+The lows are where the work is: the long frames at loads are still there (see Known issues).
+
+### New
+
+- **Its own title and data folder**: `PPSA99009` and `/data/lichii`, in the package, the installer and every guide ([#2](https://github.com/mihawk-99/PS5_Lichii/pull/2) by quatrixone). The settings file keeps its name, `config/prosperoeden.json`.
+- **Frame rate limit.** **Settings > Video > Frame rate limit** (Off, 30, 40 or 60 FPS, also per game) holds a game's own frames to an even pace. With a limit, frame generation's Auto target is the display's refresh rate, and MihawkGen makes as many frames as that target needs (up to six a game frame) instead of always one. Frame generation stays off by default.
+- **Rumble**: games that send vibration through the newer call (`SendVibrationValueInMode`) now reach the DualSense.
+- **Trusted command copy** (from GrowingBlackBeans): Ocarina of Time's command lists are parsed from the copy taken when they are submitted, not read again from the game's memory.
+- **Ports from the projects around this one:**
+  - [Fritchii#40](https://github.com/Frizti/Fritchii/pull/40): colour output masks. The shader files kept from earlier versions are prepared once again at the first start.
+  - [Fritchii#34](https://github.com/Frizti/Fritchii/pull/34): render targets used once are given back when memory is short.
+  - [Lichii#1079](https://github.com/zortos293/Lichii/pull/1079): a texture that copies overwrite whole is not uploaded first.
+  - [Lichii#1095](https://github.com/zortos293/Lichii/pull/1095): 3D engine state registers written directly.
+  - [Lichii#1103](https://github.com/zortos293/Lichii/pull/1103): the graphics driver keeps its own pipeline cache, so the emulator no longer loads and rewrites a second copy.
+  - [Lichii#1110](https://github.com/zortos293/Lichii/pull/1110): pass-through geometry shaders trimmed (Donkey Kong Bananza stopped after its golden banana loading screen).
+  - [EglantinePS5](https://github.com/heydemoura/EglantinePS5): an index buffer bound with an open end no longer copies the rest of the game's memory (Mario Kart World's race loads ran the graphics memory out).
+  - [Hookshot](https://github.com/NotRexed/Hookshot): positions computed the same in every pass, and colour outputs without NaN, on AMD.
+
+### Fixes
+
+- **Ocarina of Time's picture**: the light border around the title movie; magenta and cyan outlines and the rainbow fringe on Hyrule Field's horizon; holes through to the bright sky and glowing blocks.
+- **Ocarina of Time's intro at about 80% speed on a base PS5**: its video is decoded on four threads.
+- **Less memory at the save load**: the emulator's heap peaks at 1,421 MiB there instead of 2,574 MiB. Three of its holders give memory back (texture scratch, shader work pools, descriptor queues), pipelines are built on six threads instead of fifteen, buffers are collected while the pool is short, and the heap is trimmed deeper.
+- **Shaders built from scratch no longer cost the session.** When a first start leaves the heap over 2 GiB after building a game's shaders, the app starts again once, into the game, with that memory given back. A start that only reads the cache back carries on (checked on the PS5 Pro, two starts in a row).
+- **Graphics driver** ([PS5_Mesa](https://github.com/mihawk-99/PS5_Mesa) 7bd4aac): a cached pipeline that lost a stage is built again instead of used.
+- **A crash report says how much of the memory pool the heap holds.**
+- **Building**: the FFmpeg build finds dav1d wherever it was installed, the shutdown fix for GPU waits applies again, and the release checks match the current source (#2).
+
+### Known issues
+
+- **Ocarina of Time can still run out of memory entering Hyrule Field from Kokiri Forest** on the PS5 Pro: the memory pool the game and the graphics share is used up there. This is what is being worked on next.
+- **Ocarina of Time's shader cache takes about four minutes to load** at every start on the PS5 Pro.
+- **Missing flowers and leaves**: on our PS5 Pro they were hidden by a test switch left on the console, not by the build, and they are drawn without it. On a base PS5 they can still be missing (issue #1).
+- **Base PS5**: freezes after the intro and during loading are reported (issue #1); the base PS5 is still not a target this build is measured on.
+- Mario Kart World and Donkey Kong Bananza were not measured again with this build.
+
 ## v1.10.00
 
 Fritchii v5.5, our PS5 renderer work back in place, and Switch 2 games started from their own files, with no `.eden` file to write.
@@ -11,7 +69,7 @@ Fritchii v5.5, our PS5 renderer work back in place, and Switch 2 games started f
 | Fritchii v5.5 alone | 35.4 fps | 37.7 fps | 22.8 fps | 9.7 fps | 1,157 ms |
 | **v1.10.00** | **34.7 fps** | **36.4 fps** | **24.5 fps** | **15.3 fps** | **290 ms** |
 
-> **Pre-release.** It installs as ProsperoEden (`PPSA99009`) and replaces a ProsperoEden already installed; settings, saves and game files under `/data/lichii` are shared.
+> **Pre-release.** It installs as ProsperoEden (`PPSA99008`) and replaces a ProsperoEden already installed; settings, saves and game files under `/data/prosperoeden` are shared.
 
 > **No piracy.** No games, keys or firmware are included, and they never will be. Use only games, keys and firmware you dumped yourself from hardware you own.
 
@@ -39,7 +97,7 @@ The first pre-release of PS5_Lichii: Switch 2 games on the PS5 Pro, on [Fritchii
 | Whole gameplay stretch | 29.4 fps | 28.2 fps | 18.9 fps | 11.5 fps | 624 ms |
 | Last minute | 32.7 fps | 33.9 fps | 22.8 fps | 18.8 fps | 58 ms |
 
-> **Pre-release.** Expect hitches (250–590 ms at area changes) and games that do not start. It installs as ProsperoEden (`PPSA99009`) and replaces a ProsperoEden already installed; settings, saves and game files under `/data/lichii` are shared.
+> **Pre-release.** Expect hitches (250–590 ms at area changes) and games that do not start. It installs as ProsperoEden (`PPSA99008`) and replaces a ProsperoEden already installed; settings, saves and game files under `/data/prosperoeden` are shared.
 
 > **No piracy.** No games, keys or firmware are included, and they never will be. Use only games, keys and firmware you dumped yourself from hardware you own.
 
@@ -50,7 +108,7 @@ The first pre-release of PS5_Lichii: Switch 2 games on the PS5 Pro, on [Fritchii
 - **Memory kept free for area changes**: cold guest memory packed into a compacted slab store, a background scanner that keeps 2.5 GiB free, two-tier emergency packing, ASTC conversion in 64 MiB batches, allocator recovery, and the heap in 32 MiB pieces.
 - **Compute pipelines rebuilt on a worker thread**, from [Nolar-Hack/Lichii](https://github.com/Nolar-Hack/Lichii).
 - **Defaults from the measured run**: Fast GPU, Compact memory and Block list on. MihawkGen frame generation is available in **Settings > Video** and off by default.
-- **No update check**: homebrew.page's entry for `PPSA99009` is upstream ProsperoEden, whose releases would replace this build.
+- **No update check**: homebrew.page's entry for `PPSA99008` is upstream ProsperoEden, whose releases would replace this build.
 
 ### Fixes
 
@@ -98,8 +156,8 @@ This alpha adds post-processing looks and wallpapers of your own, frees more mem
 
 ### New and improved
 
-- **Post-processing (new setting).** **Settings > Video > Post-processing**, and the same row in a game's own settings, draws a look over the picture with ReShade FX effects: Off, or one of six presets that come with the app (Anime, Cinematic, Clean, Dreamy, Retro, Vivid). Presets of your own go in `/data/lichii/user/post_presets/` and their effects in `/data/lichii/user/post_shaders/`. It works with the Vulkan renderer; see [Post-processing](https://github.com/blackbearreloaded/ProsperoEden/blob/main/docs/SETTINGS.md#post-processing).
-- **A wallpaper of your own (new setting).** **Settings > Appearance > Wallpaper** shows an image from `/data/lichii/wallpapers` behind the launcher's screens instead of the theme's artwork: PNG or JPEG (also BMP, GIF, TGA and DDS), put in the folder over FTP and listed when the dialog opens. A game's own cover still takes the place where the theme shows one. An image of another shape is resized to fit the screen whole, with the theme behind what it leaves over. See [Wallpapers](WALLPAPERS.md).
+- **Post-processing (new setting).** **Settings > Video > Post-processing**, and the same row in a game's own settings, draws a look over the picture with ReShade FX effects: Off, or one of six presets that come with the app (Anime, Cinematic, Clean, Dreamy, Retro, Vivid). Presets of your own go in `/data/prosperoeden/user/post_presets/` and their effects in `/data/prosperoeden/user/post_shaders/`. It works with the Vulkan renderer; see [Post-processing](https://github.com/blackbearreloaded/ProsperoEden/blob/main/docs/SETTINGS.md#post-processing).
+- **A wallpaper of your own (new setting).** **Settings > Appearance > Wallpaper** shows an image from `/data/prosperoeden/wallpapers` behind the launcher's screens instead of the theme's artwork: PNG or JPEG (also BMP, GIF, TGA and DDS), put in the folder over FTP and listed when the dialog opens. A game's own cover still takes the place where the theme shows one. An image of another shape is resized to fit the screen whole, with the theme behind what it leaves over. See [Wallpapers](WALLPAPERS.md).
 - **More free memory in 64-bit games.** The emulated console's memory is now taken from the PS5 only where a game writes it, and given back where the game's console clears or frees it, or where it holds only zeroes again. Two games measured on the console held 644 MiB and 1,956 MiB less, at the same frame rate. After "A Compressed RAM Service" (Gregory Price, Linux Plumbers 2026).
 - **Compact memory (new Performance setting, off by default).** Gives back memory a game wrote but left mostly empty, 16 KiB at a time: 100 to 300 MiB more in the same two games. A game that keeps rewriting such memory can stutter; leave it off unless a game runs short of memory.
 - **Games with many shaders start, and start faster the next time.** A game with thousands of pipelines could stop during its loading screen because the locks that guard pipeline builds ran out; they are now shared. The graphics driver keeps its compiled shaders between starts on every setup, and its pipeline cache is kept when a write is cut short, so a large game compiles them once instead of at every start. A line at launch says where the cache is kept.
@@ -217,8 +275,8 @@ And to everyone who tests ProsperoEden on their own console and reports what the
 - **Public rooms.** A list of the rooms in Eden's public directory, with each room's game, how many players it has and whether it asks for a password. Rooms you can join come first, the busiest at the top; Left and Right move a page at a time and Triangle refreshes. Rooms that use another protocol version are marked and cannot be joined.
 - **For a stable multiplayer session**, everyone needs the same game and the same update of it, and the player who hosts the lobby should use 1x resolution with frame generation off. A host that cannot hold full speed ends the session for everyone.
 - **Connection problems are explained.** When a room cannot be joined, a panel says what happened and what to try: a wrong password, a full room, a room that did not answer, a name already in use. **Settings > Diagnostics** has the detailed log to send with a report.
-- **Self-update keeps the version it replaces.** After an update, the previous version's files stay in `/data/lichii/previous-version/PPSA99009-backup` until the next update. See [Going back to the previous version](INSTALL.md#going-back-to-the-previous-version).
-- **One place for your data.** Settings, saves and covers are only ever in `/data/lichii`. When ProsperoEden could not get access to the console's storage at a start, it used to carry on with empty settings and no saves, which looked as if they had been lost; it now says so on the home screen and starts no game. Keys, firmware and games that an early version kept inside the app's folder are moved to `/data/lichii` at the first start, so that replacing the app cannot remove them.
+- **Self-update keeps the version it replaces.** After an update, the previous version's files stay in `/data/prosperoeden/previous-version/PPSA99008-backup` until the next update. See [Going back to the previous version](INSTALL.md#going-back-to-the-previous-version).
+- **One place for your data.** Settings, saves and covers are only ever in `/data/prosperoeden`. When ProsperoEden could not get access to the console's storage at a start, it used to carry on with empty settings and no saves, which looked as if they had been lost; it now says so on the home screen and starts no game. Keys, firmware and games that an early version kept inside the app's folder are moved to `/data/prosperoeden` at the first start, so that replacing the app cannot remove them.
 - **120 Hz holds on a display with a variable refresh rate.** With **Refresh rate** at 120 Hz, such a display was read as not having switched and the output went back to 60 Hz.
 - **No more lost graphics device in shader-heavy scenes.** Long scenes could stop a game with `VK_ERROR_DEVICE_LOST`; draws are now handed to the GPU in smaller batches. Contributed by [Bauls Deep](https://github.com/bawsdeep).
 - **Eden updated** to its revision of 8 October (`67bada77`), together with the Vulkan driver (Mesa), its tools and the Payload SDK.
@@ -266,7 +324,7 @@ A bug fix for v1.000.090. If you are on v1.000.090, update.
 - **ProsperoEden starts wherever it is installed.** On a USB drive, extended storage, an etaHEN games folder or any other place ShadowMountPlus mounts it from, it could not find its own files and closed after a moment. It now reads its files from where the PS5 mounts the running app.
 - **Updates from the menu work on those installs too.** The update helper updates the folder ShadowMountPlus mounted the app from; an app installed as an image is not changed, and the dialog says to replace the image.
 - **Clearer error when the menu cannot start**, naming the file and the reason.
-- **Start-up trace for bug reports.** Each start-up step is written to the kernel log (`[ProsperoEden diag]`) and to `/data/lichii/logs/boot-trace.txt`.
+- **Start-up trace for bug reports.** Each start-up step is written to the kernel log (`[ProsperoEden diag]`) and to `/data/prosperoeden/logs/boot-trace.txt`.
 
 ## v1.000.060
 
@@ -310,10 +368,10 @@ A bug fix for v1.000.090. If you are on v1.000.090, update.
 - **Output resolution.** **Settings > Video** has a new **Output resolution** row: 1080p (as before), 1440p or 2160p. It is the size of the picture ProsperoEden puts out, for the menu and for games. Until now a game's picture was made at 1080p and enlarged, whatever its internal resolution; at 2160p the upscaling filter scales the game straight to a 4K picture. A larger picture needs more graphics memory.
 - **3x and 4x resolution.** The internal resolution now goes up to 4x. These need far more graphics memory than 2x; a game that runs out says so, and can be given its own lower resolution.
 - **Patches for more frames than the display shows.** A game patched to run faster than the output refreshes keeps its pace: the frames the display has no refresh for are left out.
-- **Crash reports.** If ProsperoEden stops because of an error, it writes `crash-<date>-<time>.txt` to `/data/lichii/logs`, starts again and says on the home screen where the report is. That session's logs are kept beside it, and the five newest reports stay. A report holds what failed, where in the app's code, and what was running; it never holds the contents of memory.
+- **Crash reports.** If ProsperoEden stops because of an error, it writes `crash-<date>-<time>.txt` to `/data/prosperoeden/logs`, starts again and says on the home screen where the report is. That session's logs are kept beside it, and the five newest reports stay. A report holds what failed, where in the app's code, and what was running; it never holds the contents of memory.
 - The launcher and the OpenGL renderer use the PS5 OpenGL 4.6 SDK 1.0.0.
-- The graphics driver's shader cache moved to `/data/lichii/cache`, so a read-only package install keeps it.
-- **Experimental: block list.** With an empty file named `block-list.txt` in `/data/homebrew/PPSA99009`, ProsperoEden saves which code a 64-bit game compiled and compiles it again on a spare CPU when the game next starts. In a repeat session of a large open-world game, the emulated cores then compiled 426 blocks during play instead of 138,262, and gameplay started at 30 FPS instead of 22. It is off by default until more games have run with it.
+- The graphics driver's shader cache moved to `/data/prosperoeden/cache`, so a read-only package install keeps it.
+- **Experimental: block list.** With an empty file named `block-list.txt` in `/data/homebrew/PPSA99008`, ProsperoEden saves which code a 64-bit game compiled and compiles it again on a spare CPU when the game next starts. In a repeat session of a large open-world game, the emulated cores then compiled 426 blocks during play instead of 138,262, and gameplay started at 30 FPS instead of 22. It is off by default until more games have run with it.
 
 ## v1.000.030
 
@@ -339,7 +397,7 @@ A bug fix for v1.000.090. If you are on v1.000.090, update.
 
 - **Vulkan is now the recommended and default renderer.** OpenGL remains available in Settings.
 - **Choose where your game files live.** The new **Settings > Game files** browser selects any folder, including external drives and USB devices. The old `assets/` folder keeps working until you choose one.
-- **App data moved to `/data/lichii`.** Config, logs, covers, and saves now live outside the app folder, so updating the app never touches them.
+- **App data moved to `/data/prosperoeden`.** Config, logs, covers, and saves now live outside the app folder, so updating the app never touches them.
 - **Settings are now stored in one JSON file.** Earlier text settings are migrated automatically on first launch.
 - **Faster Library navigation**, and covers and recent games that survive folder moves.
 - **New icons** for controller actions, pages, and the Handheld / Docked mode.

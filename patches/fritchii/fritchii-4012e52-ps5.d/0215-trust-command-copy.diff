@@ -1,0 +1,103 @@
+Command lists: Ocarina of Time parses the copy taken at submit, also after a semaphore wait and
+for an entry resumed inside (GrowingBlackBeans' trust copy, viejunerd/Eglantine-PS5-#21).
+EDEN_NX2_TRUST_COPY=0 turns it off, =1 turns it on for every title.
+
+diff --color -ru a/src/video_core/dma_pusher.cpp b/src/video_core/dma_pusher.cpp
+--- a/src/video_core/dma_pusher.cpp
++++ b/src/video_core/dma_pusher.cpp
+@@ -163,6 +163,14 @@
+ 
+ DmaPusher::DmaPusher(Core::System& system_, MemoryManager& memory_manager_, Control::ChannelState& channel_state_)
+     : system{system_}
++    , trust_copy{[&system_] {
++        const char* value = std::getenv("EDEN_NX2_TRUST_COPY");
++        if (value != nullptr && *value != '\0') {
++            return value[0] == '1';
++        }
++        constexpr u64 OcarinaOfTimeProgramId = 0x0400486024DEC000ULL;
++        return system_.GetApplicationProcessProgramID() == OcarinaOfTimeProgramId;
++    }()}
+     , memory_manager{memory_manager_}
+     , channel_state{channel_state_}
+     , signal_sync{false}
+@@ -232,7 +240,12 @@
+             first_entry = dma_pushbuffer_subindex + (command_resume_offset != 0 ? 1 : 0);
+         }
+         for (CommandList& list : dma_pushbuffer) {
+-            if (!list.submitted_offsets.empty()) {
++            if (KeepsCopy(list)) {
++                // Behind a GPU map when submitted: the map has run by now.
++                if (!list.deferred_entries.empty()) {
++                    RefreshDeferredEntries(list);
++                }
++            } else if (!list.submitted_offsets.empty()) {
+                 RefreshSnapshot(list, now, first_entry);
+             }
+             first_entry = 0;
+@@ -397,11 +410,12 @@
+             }
+         }
+         // Resume and GPU-written entries need live words, even after a flush cleared dirty state.
++        const bool keeps_copy = KeepsCopy(command_list);
+         const bool submitted = (command_list.snapshot_suspensions & 1) == 0 &&
+-                               command_list.snapshot_suspensions ==
+-                                   suspensions.load(std::memory_order_acquire) &&
++                               (keeps_copy || command_list.snapshot_suspensions ==
++                                                  suspensions.load(std::memory_order_acquire)) &&
+                                VideoCommon::CanUseSubmittedCommands(
+-            command_resume_offset != 0,
++            command_resume_offset != 0 && !keeps_copy,
+             dma_pushbuffer_subindex < command_list.submitted_offsets.size() &&
+                 !std::ranges::binary_search(command_list.deferred_entries,
+                                             static_cast<u32>(dma_pushbuffer_subindex)),
+@@ -415,7 +429,9 @@
+                 header.size};
+             RecordParsedEntry(header, commands);
+             Nx2CmdPageDiag::CountEntry(Nx2CmdPageDiag::Path::Submitted);
+-            command_resume_offset += ProcessCommands(commands, 0);
++            // A resumed entry (KeepsCopy) goes on from the word the acquire stopped at.
++            command_resume_offset +=
++                ProcessCommands(commands.subspan(command_resume_offset), command_resume_offset);
+         } else if (use_safe) {
+             Tegra::Memory::GpuGuestMemory<Tegra::CommandHeader, Tegra::Memory::GuestMemoryFlags::SafeRead>headers(memory_manager, dma_state.dma_get, header.size, &command_headers);
+             const std::span<const CommandHeader> commands{headers.data(), headers.size()};
+diff --color -ru a/src/video_core/dma_pusher.h b/src/video_core/dma_pusher.h
+--- a/src/video_core/dma_pusher.h
++++ b/src/video_core/dma_pusher.h
+@@ -160,7 +160,8 @@
+         // Copied during a suspension, or behind one: copy again now, unless still suspended.
+         const u64 now = suspensions.load(std::memory_order_acquire);
+         if (!entries.submitted_offsets.empty() && (now & 1) == 0) {
+-            if (ResnapshotEnabled() && entries.snapshot_suspensions != now) {
++            if (ResnapshotEnabled() && entries.snapshot_suspensions != now &&
++                !KeepsCopy(entries)) {
+                 RefreshSnapshot(entries, now);
+             } else if (!entries.deferred_entries.empty()) {
+                 // Behind a GPU map when submitted: the map has run by now (GPU::MapInOrder).
+@@ -218,6 +219,17 @@
+     /// Copies the list's deferred entries (CommandList::deferred_entries) from memory.
+     void RefreshDeferredEntries(CommandList& list);
+ 
++    /// Trust copy (GrowingBlackBeans, viejunerd/Eglantine-PS5-#21): a list copied while the
++    /// channel ran keeps that copy across later suspensions, and an entry resumed after an
++    /// acquire parses the rest of it from the copy. Ocarina of Time runs a frame ahead and
++    /// rewrites the same command ring for the next frame, so words read again after the acquire
++    /// were the next frame's (methods on unbound subchannels, then std::bad_alloc on GPUBack).
++    /// A list copied during a suspension is still read again (the game writes it before the
++    /// release: Hyrule Warriors), as are GPU-written entries.
++    bool KeepsCopy(const CommandList& list) const {
++        return trust_copy && (list.snapshot_suspensions & 1) == 0;
++    }
++
+     /// EDEN_NX2_RESNAPSHOT=0 turns snapshot refreshes off.
+     static bool ResnapshotEnabled() {
+         static const bool enabled = [] {
+@@ -257,6 +269,8 @@
+     };
+ 
+     Core::System& system;
++    /// EDEN_NX2_TRUST_COPY: unset, Ocarina of Time only; 1 every title; 0 none (KeepsCopy).
++    bool trust_copy;
+     MemoryManager& memory_manager;
+     Control::ChannelState& channel_state;
+ 

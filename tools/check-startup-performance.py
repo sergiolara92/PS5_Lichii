@@ -112,7 +112,7 @@ with tempfile.TemporaryDirectory(prefix='eden-startup-') as directory:
                     str(root / 'src/memory_pages.cpp'),
                     str(cache / 'native-local/_deps/lz4-build/liblz4.a'), str(source / 'common/cpu_features.cpp'),
                     str(source / 'common/x64/rdtsc.cpp'), str(source / 'common/steady_clock.cpp'),
-                    '-Wl,--wrap=clock_gettime', '-o', str(executable)], check=True)
+                    '-Wl,--wrap=clock_gettime', '-llz4', '-o', str(executable)], check=True)
     output = subprocess.check_output([str(executable)], text=True, timeout=15)
     assert 'EDEN_PERF_CPU_CLOCK_CHECK valid=1 ' in output
     assert 'EDEN_PERF_CPU_CLOCK_CHECK valid=0 ' in output

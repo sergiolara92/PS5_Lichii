@@ -867,12 +867,16 @@ std::size_t DecommitMemoryRange(void* address, std::size_t size) noexcept {
 namespace {
 constexpr std::size_t CodeStep = std::size_t{16} << 20;
 constexpr std::size_t CodeSteps = 64; // the largest cache: 1 GiB
+// A step is taken as 2 MiB pieces, each where the pool has one: late in a long session the pool's
+// free memory is scattered (MKW without Pro memory: tens of MiB free, no 16 MiB run), and a step
+// asked for whole was refused and the app aborted.
+constexpr std::size_t CodePiece = LargePage, CodePieces = CodeStep / CodePiece;
 struct CodeRange {
     std::atomic<std::uintptr_t> executable{0}; // 0: free
     std::uintptr_t writable = 0;
     std::size_t span = 0;
     std::atomic<std::size_t> committed{0};
-    std::int64_t physical[CodeSteps] = {};
+    std::int64_t physical[CodeSteps * CodePieces] = {};
 };
 std::array<CodeRange, 16> code_ranges;
 std::mutex code_mutex;
@@ -883,20 +887,30 @@ bool CommitCodeStep(CodeRange& range, std::size_t offset) {
     void* const writable = reinterpret_cast<void*>(range.writable + offset);
     void* const executable = reinterpret_cast<void*>(range.executable.load(std::memory_order_relaxed) + offset);
 #ifdef PS5_NATIVE
-    std::int64_t physical = -1;
-    if (eden_direct_low(CodeStep, LargePage, 12, &physical) != 0) return false;
+    std::int64_t* const pieces = &range.physical[offset / CodeStep * CodePieces];
+    std::size_t taken = 0;
+    for (; taken < CodePieces; ++taken)
+        if (eden_direct_low(CodePiece, LargePage, 12, &pieces[taken]) != 0) break;
+    if (taken < CodePieces) {
+        for (std::size_t piece = 0; piece < taken; ++piece) sceKernelReleaseDirectMemory(pieces[piece], CodePiece);
+        return false;
+    }
     // A step that fails half way stays as it is: the caller has no cache to go on with.
-    void* at = writable;
-    if (sceKernelMapDirectMemory(&at, CodeStep, PROT_READ | PROT_WRITE, MAP_FIXED, physical, LargePage) != 0 ||
-        at != writable)
-        return false;
+    for (std::size_t piece = 0; piece < CodePieces; ++piece) {
+        void* at = static_cast<char*>(writable) + piece * CodePiece;
+        void* const want_writable = at;
+        if (sceKernelMapDirectMemory(&at, CodePiece, PROT_READ | PROT_WRITE, MAP_FIXED, pieces[piece], LargePage) != 0 ||
+            at != want_writable)
+            return false;
+        at = static_cast<char*>(executable) + piece * CodePiece;
+        void* const want_executable = at;
+        if (sceKernelMapDirectMemory(&at, CodePiece, PROT_READ, MAP_FIXED, pieces[piece], LargePage) != 0 ||
+            at != want_executable)
+            return false;
+    }
     std::memset(writable, 0, CodeStep);
-    at = executable;
-    if (sceKernelMapDirectMemory(&at, CodeStep, PROT_READ, MAP_FIXED, physical, LargePage) != 0 || at != executable)
-        return false;
     // As MapExecutableAlias: the mapping call refuses EXEC on some versions.
     if (mprotect(executable, CodeStep, PROT_READ | PROT_EXEC) != 0) return false;
-    range.physical[offset / CodeStep] = physical;
 #else
     if (mprotect(writable, CodeStep, PROT_READ | PROT_WRITE) != 0 ||
         mprotect(executable, CodeStep, PROT_READ | PROT_EXEC) != 0)
@@ -994,8 +1008,8 @@ bool FreeCodeRange(void* executable) noexcept {
         if (munmap(reinterpret_cast<void*>(range.writable), range.span) != 0 || munmap(executable, range.span) != 0)
             std::abort();
 #ifdef PS5_NATIVE
-        for (std::size_t step = 0; step < committed / CodeStep; ++step)
-            if (sceKernelReleaseDirectMemory(range.physical[step], CodeStep) != 0) std::abort();
+        for (std::size_t piece = 0; piece < committed / CodePiece; ++piece)
+            if (sceKernelReleaseDirectMemory(range.physical[piece], CodePiece) != 0) std::abort();
 #endif
         code_reserved.fetch_sub(range.span, std::memory_order_relaxed);
         code_committed.fetch_sub(committed, std::memory_order_relaxed);

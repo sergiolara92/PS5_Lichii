@@ -150,7 +150,7 @@ int main() {
             assert(mincore(const_cast<unsigned char*>(gone), page, &state)==-1 && errno==ENOMEM);
         }
 #ifdef EDEN_JIT_ALIAS_NATIVE
-        assert(handles.size()==4);
+        assert(handles.size()==4*8);  // four 16 MiB steps, each taken as 2 MiB pieces
         for (int fd : handles) { errno=0; assert(fcntl(fd,F_GETFD)==-1 && errno==EBADF); }
         reserve_ok=false;
 #endif

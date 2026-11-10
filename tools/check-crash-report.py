@@ -79,6 +79,10 @@ extern "C" std::size_t eden_heap_last_failure(unsigned* why, std::size_t* count)
     *count = 1;
     return std::size_t{134217728};
 }
+extern "C" const char* eden_guest_last_refusal(unsigned long long* count) noexcept {
+    *count = 2;
+    return "EDEN_CRAM declined: address 0x8185600000 slot 3115 state 0 found no block\n";
+}
 #endif
 
 #define CHECK(condition) \
@@ -280,6 +284,8 @@ def check(binary, console):
         == console, report
     assert ('heap refused: 1 request, the last of 134217728 bytes: the console had no memory for a new piece\n'
             in report) == console, report
+    assert ('guest memory refused: 2 writes, the last: EDEN_CRAM declined: address 0x8185600000 slot 3115 '
+            'state 0 found no block\n' in report) == console, report
 
     # The functions, named from the report.
     named = subprocess.run([sys.executable, str(root / 'tools/symbolize-crash.py'), str(reports[0]), str(binary)],
