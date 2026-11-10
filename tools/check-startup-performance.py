@@ -106,9 +106,11 @@ with tempfile.TemporaryDirectory(prefix='eden-startup-') as directory:
     executable = directory / 'check'
     subprocess.run(['clang++-18', '-std=c++20', '-O2', '-pthread', '-DARCHITECTURE_x86_64',
                     '-I', str(root / 'headless'), '-I', str(root / 'src'), '-I', str(source),
+                    '-I', str(source.parent / '.cache/cpm/lz4/ebb370ca83/lib'),
                     '-I', str(root / '.deps/fmt-12.1.0/include'),
                     str(directory / 'check.cpp'), str(root / 'headless/performance.cpp'),
-                    str(root / 'src/memory_pages.cpp'), str(source / 'common/cpu_features.cpp'),
+                    str(root / 'src/memory_pages.cpp'),
+                    str(cache / 'native-local/_deps/lz4-build/liblz4.a'), str(source / 'common/cpu_features.cpp'),
                     str(source / 'common/x64/rdtsc.cpp'), str(source / 'common/steady_clock.cpp'),
                     '-Wl,--wrap=clock_gettime', '-o', str(executable)], check=True)
     output = subprocess.check_output([str(executable)], text=True, timeout=15)
@@ -120,7 +122,7 @@ with tempfile.TemporaryDirectory(prefix='eden-startup-') as directory:
     snapshots = output.split('EDEN_PERF_SAMPLE ')[1:]
     assert len(snapshots) == 5
     for sample in snapshots:
-        assert sample.count('EDEN_PERF_WORKER ') == 7 and sample.count('EDEN_PERF_PROGRESS ') == 4
+        assert sample.count('EDEN_PERF_WORKER ') == 9 and sample.count('EDEN_PERF_PROGRESS ') == 4
         assert 'core=1 compilations=1 ' in sample
         assert re.search(r'name=CPUCore_2 cpu_ns=-\d+', sample)
     assert int(re.search(r'name=CPUCore_1 cpu_ns=(\d+)', snapshots[0])[1]) > 0
