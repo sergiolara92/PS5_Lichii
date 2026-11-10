@@ -6,6 +6,7 @@
 # Prints the gameplay fps windows and the GPU front thread's cost (oot-gpu-stats.py).
 # OOT_ROUTE="lx ly rx ry ms;...": stick steps sent as soon as gameplay starts (e.g. the user's save in Hyrule
 # Castle Town out to Hyrule Field), then OOT_ROUTE_WAIT seconds (default 60) for the area to load before measuring.
+# OOT_RUN_TIMEOUT=1400: seconds before the hang watchdog kills the title (raise it for a boot that builds every pipeline).
 # OOT_MOVE=1: while measuring, keep walking forward and back with the camera panning (3 s steps).
 set -u
 C=/home/mihawk/Desktop/PS5_Homebrews/PS5_Lichii/coordination
@@ -41,7 +42,7 @@ ftp rm /data/prosperoeden/logs/heap.log 2>/dev/null
 ftp rm /data/prosperoeden/logs/stderr.log 2>/dev/null; ftp rm /data/prosperoeden/user/log/eden_log.txt 2>/dev/null
 ftp put $APP/dev-settings.txt "$DEV_SETTINGS"
 cd /home/mihawk/Desktop/PS5_Homebrews/PS5_Vulkan
-PS5_HOST=$HOST timeout 1500 python3 tools/run-title.py PPSA99008 --until 'Userspace PANIC' --timeout 1400 \
+PS5_HOST=$HOST timeout $(( ${OOT_RUN_TIMEOUT:-1400} + 100 )) python3 tools/run-title.py PPSA99008 --until 'Userspace PANIC' --timeout ${OOT_RUN_TIMEOUT:-1400} \
     --output $out/klog.log > $out/run.out 2>&1 &
 runner=$!
 id=$(date +%s)
@@ -72,7 +73,7 @@ while kill -0 $runner 2>/dev/null; do
         if [[ $(windows | awk '$1 >= 55' | wc -l) -ge 2 ]] || { [[ -n ${video_at:-} ]] && (( now - video_at >= 45 )); }; then
             sleep 5; for step in 1 2 3; do press $((0x2000)) 250; sleep 4; done
             phase=loading; continued=$now; echo "pressed Continue at $((now - started)) s"
-        elif (( now - started > 600 )); then echo "no title screen in 600 s"; phase=quit; fi
+        elif (( now - started > ${OOT_TITLE_WAIT:-600} )); then echo "no title screen in ${OOT_TITLE_WAIT:-600} s"; phase=quit; fi  # OOT_TITLE_WAIT: longer for a boot that builds every pipeline
     elif [[ $phase == loading ]]; then
         # Gameplay: the first window under 40 fps after the presses.
         n=$(windows | wc -l); last=$(windows | tail -1)
@@ -101,7 +102,7 @@ while kill -0 $runner 2>/dev/null; do
             fi
             phase=measure; measure_from=$(date +%s)
         fi
-        (( now - started > 900 )) && phase=quit
+        (( now - continued > 300 )) && phase=quit  # from the presses, not the start: a boot that builds every pipeline is long
     elif [[ $phase == measure ]]; then
         windows >/dev/null  # keeps $out/heap.poll current: the summary reads the gameplay windows from it
         # OOT_WALK="lx ly ms;lx ly ms;...": halfway through, these left-stick pulses in turn (at
@@ -121,7 +122,9 @@ while kill -0 $runner 2>/dev/null; do
         windows >/dev/null  # the last gameplay windows, before the quit restarts the log
         [[ -n ${mover:-} ]] && { kill $mover 2>/dev/null; mover=; sleep 1; }
         id=$((id + 1000000))  # above every id the mover subshell sent (the console takes only rising ids)
-        press $((0x100400)) 800; sleep 12; ftp put $APP/quit-app.txt "quit $(date +%s%N)"; sleep 10
+        ftp get /data/prosperoeden/user/log/eden_log.txt $out/eden_log-prestop.txt 2>/dev/null  # the launcher starts a new log
+        press $((0x100400)) 800; sleep 12; ftp rm $APP/compat-input.txt 2>/dev/null  # read; a restarted session must not replay it
+        ftp put $APP/quit-app.txt "quit $(date +%s%N)"; sleep 10
     fi
 done
 wait $runner

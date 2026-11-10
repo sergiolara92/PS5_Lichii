@@ -1398,15 +1398,28 @@ for signature, index in (
     if index == 13:
         scope += '''    if constexpr (std::is_same_v<Runtime, Vulkan::TextureCacheRuntime>) {
         if ((cost_timer || Eden::Performance::texture_budget_log.load(std::memory_order_relaxed)) &&
-            frame_tick % 300 == 0)
+            frame_tick % 300 == 0) {
+            // Census: the cache's images (those over 64 MiB, which the console keeps, apart) against
+            // all the allocator holds; the rest is buffers, staging, presentation and block slack.
+            u64 image_bytes = 0, huge_bytes = 0;
+            for (const auto [image_id, image] : slot_images) {
+                const u64 bytes = ImageMemoryBytes(*image);
+                image_bytes += bytes;
+                huge_bytes += bytes > 64_MiB ? bytes : 0;
+            }
+            const auto held = Eden::Performance::graphics_memory_held.load(std::memory_order_relaxed);
             std::printf("EDEN_VULKAN_TEXTURE_BUDGET frame=%llu usage=%llu expected=%llu critical=%llu "
-                        "keep_dirty=%d memory_short=%d\\n",
+                        "keep_dirty=%d memory_short=%d images=%zu image_bytes=%llu huge_bytes=%llu held=%llu\\n",
                         static_cast<unsigned long long>(frame_tick),
                         static_cast<unsigned long long>(total_used_memory),
                         static_cast<unsigned long long>(expected_memory),
                         static_cast<unsigned long long>(critical_memory),
                         int(Eden::Performance::gc_keep_dirty.load(std::memory_order_relaxed)),
-                        int(Eden::Performance::graphics_memory_short.load(std::memory_order_relaxed)));
+                        int(Eden::Performance::graphics_memory_short.load(std::memory_order_relaxed)),
+                        slot_images.size(), static_cast<unsigned long long>(image_bytes),
+                        static_cast<unsigned long long>(huge_bytes),
+                        static_cast<unsigned long long>(held ? held() : 0));
+        }
     }
 '''
     texture_costs.append((anchor, anchor + scope))
@@ -1705,6 +1718,50 @@ if texture_cache_text.count(pool_old) == 1:
             '#endif\n' + keep_old, 1)
     else:
         print('VK-PORT-SKIP', 'Collector write-back anchor changed: huge GPU-written images not kept', file=sys.stderr)
+    # While the pool is short (performance.h, GraphicsMemoryIsShort: under 2 GiB usable), what the
+    # allocator holds over EDEN_NX2_TC_POOL_CAP_MIB (2048; 0: off) puts the collector past its first
+    # mark, never past the second: the budget's marks follow the pool alone, so on OOT's walk into
+    # Kokiri village (Pro, 1x; 6 GB of guest memory) they let graphics grow 0.6 -> 3.4 GB before the
+    # collector began. Mario Kart World's races run past the first mark already; aggressive collection
+    # there recreated ~90 images a second (performance.h, KeepDirtyTextures), hence no second mark.
+    usage_old = '        total_used_memory = runtime.GetDeviceMemoryUsage();\n'
+    if texture_cache_text.count(usage_old) == 1:
+        texture_cache_text = texture_cache_text.replace(usage_old, usage_old + (
+            '#ifdef PS5_NATIVE\n'
+            '        static const u64 pool_cap = [] {\n'
+            '            const char* value = std::getenv("EDEN_NX2_TC_POOL_CAP_MIB");\n'
+            '            return (value != nullptr ? std::strtoull(value, nullptr, 10) : 2048ULL) << 20;\n'
+            '        }();\n'
+            '        if (const auto held = ::Eden::Performance::graphics_memory_held.load(std::memory_order_relaxed);\n'
+            '            pool_cap != 0 && held != nullptr && critical_memory > expected_memory &&\n'
+            '            ::Eden::Performance::GraphicsMemoryIsShort()) {\n'
+            '            const u64 bytes = held();  // deleted images still held are taken off below\n'
+            '            if (bytes > pool_cap) {\n'
+            '                total_used_memory = (std::max)(total_used_memory,\n'
+            '                    (std::min)(expected_memory + (bytes - pool_cap), critical_memory - 1));\n'
+            '            }\n'
+            '        }\n'
+            '#endif\n'), 1)
+    else:
+        print('VK-PORT-SKIP', 'Texture usage anchor changed: graphics not held to EDEN_NX2_TC_POOL_CAP_MIB', file=sys.stderr)
+    # The cold sweep takes superseded render targets of guarded shapes too (as EDEN_NX2_TC_COLD_GUARDED=1
+    # does) while the pool is short; =0 never. OOT's dynamic resolution left ~2.4 such images a frame
+    # (1465 per 600 frames on the Kokiri walk) to the collector, which waits 10-50 frames before taking
+    # them; Mario Kart World has none. Each goes as the collector would take it, without a write-back.
+    guarded_old = ('    static const bool sweep_guarded = [] {\n'
+                   '        const char* value = std::getenv("EDEN_NX2_TC_COLD_GUARDED");\n'
+                   '        return value != nullptr && value[0] == \'1\';\n'
+                   '    }();\n')
+    if texture_cache_text.count(guarded_old) == 1:
+        texture_cache_text = texture_cache_text.replace(guarded_old, (
+            '    static const int guarded_env = [] {\n'
+            '        const char* value = std::getenv("EDEN_NX2_TC_COLD_GUARDED");\n'
+            '        return value == nullptr ? -1 : value[0] == \'1\' ? 1 : 0;\n'
+            '    }();\n'
+            '    const bool sweep_guarded =\n'
+            '        guarded_env >= 0 ? guarded_env == 1 : ::Eden::Performance::GraphicsMemoryIsShort();\n'), 1)
+    else:
+        print('VK-PORT-SKIP', 'Cold sweep anchor changed: guarded chains kept while the pool is short', file=sys.stderr)
     if '"performance.h"' not in texture_cache_text:
         texture_cache_text = texture_cache_text.replace('namespace VideoCommon {', '#include "performance.h"\n\nnamespace VideoCommon {', 1)
     if texture_cache_path.read_text() != texture_cache_text:
@@ -1753,6 +1810,21 @@ adapt('src/video_core/buffer_cache/buffer_cache.h',
       'vulkan-cache/video_core/buffer_cache/buffer_cache.h', [
     ('#include "video_core/buffer_cache/buffer_cache_base.h"',
      '#include "video_core/buffer_cache/buffer_cache_base.h"\n#include "performance.h"'),
+    # While the pool the guest shares is short (performance.h, GraphicsMemoryIsShort) the collector
+    # takes what 120 frames left unused whatever the buffers hold; EDEN_NX2_BUFFER_GC_SHORT=0: only
+    # from 512 MiB, as before. On OOT's walk into Kokiri village the buffers held 0.6-1.4 GB (a
+    # second copy of guest memory) and under 512 MiB nothing was collected while the pool ran out
+    # (run pt). Not the aggressive pass: that one downloads GPU-written buffers first.
+    ('        if (buffer_bytes >= 512_MiB) {\n'
+     '            RunGarbageCollector(buffer_bytes >= 1_GiB);\n'
+     '        }\n',
+     '        static const bool collect_short = [] {\n'
+     '            const char* value = std::getenv("EDEN_NX2_BUFFER_GC_SHORT");\n'
+     '            return value == nullptr || value[0] != \'0\';\n'
+     '        }();\n'
+     '        if (buffer_bytes >= 512_MiB || (collect_short && ::Eden::Performance::GraphicsMemoryIsShort())) {\n'
+     '            RunGarbageCollector(buffer_bytes >= 1_GiB);\n'
+     '        }\n'),
     ('void BufferCache<P>::BindHostGeometryBuffers(bool is_indexed) {',
      'void BufferCache<P>::BindHostGeometryBuffers(bool is_indexed) {\n'
      '    long long since_geo = ::Eden::Performance::MarkStart();'),
@@ -2523,6 +2595,36 @@ if runtime_text.count(free_cap) == 1:
     runtime_text = runtime_text.replace(free_cap, '    static constexpr u64 MaxFreeTranscodeBytes = u64{32} << 20;\n')
 else:
     SKIPPED.append('decode scratch reuse cap'); print('VK-PORT-SKIP decode scratch reuse cap', file=sys.stderr)
+# A large ASTC decode (>= 64 MiB of RGBA8) is put off while the shared pool cannot hold its decode image, its BC
+# output buffer (under half the decode, power-of-two staging) and 512 MiB more: the output buffer has no
+# fallback, so its failure closed OOT on the Pro (6144x6144: the decode image given after recovery 12, then
+# no block for the 64 MiB buffer, issue 1). It is skipped like a decode that found no memory and tried again
+# on next use; the collector is already aggressive at that point (under 1 GiB free). EDEN_ASTC_POOL_GUARD=0: off.
+decode_anchor = '    constexpr VkFormat DecodeFormat = VK_FORMAT_R8G8B8A8_UNORM;\n'
+if runtime_text.count(decode_anchor) == 1 and 'u64 layer_decode_bytes = 0;' in runtime_text:
+    runtime_text = runtime_text.replace(decode_anchor, (
+        '    static const bool pool_guard = [] {\n'
+        '        const char* value = std::getenv("EDEN_ASTC_POOL_GUARD");\n'
+        '        return value == nullptr || value[0] != \'0\';\n'
+        '    }();\n'
+        '    if (const auto free_memory = ::Eden::Performance::graphics_memory_free.load(std::memory_order_relaxed);\n'
+        '        pool_guard && free_memory && layer_decode_bytes * batch >= (u64{64} << 20)) {\n'
+        '        const u64 need = layer_decode_bytes * batch * 3 / 2 + (u64{512} << 20);\n'
+        '        const u64 free_bytes = free_memory();  // refreshed at most every 250 ms; 0: unknown\n'
+        '        if (free_bytes != 0 && free_bytes < need) {\n'
+        '            static u32 deferred{};\n'
+        '            if (deferred++ % 64 == 0) {\n'
+        '                LOG_WARNING(Render_Vulkan,\n'
+        '                            "ASTC decode of {}x{} ({} MiB) deferred: {} MiB free in the pool ({} so far)",\n'
+        '                            width, height, (layer_decode_bytes * batch) >> 20, free_bytes >> 20, deferred);\n'
+        '            }\n'
+        '            image.flags |= VideoCommon::ImageFlagBits::CpuModified;\n'
+        '            TransitionImageLayout(image);\n'
+        '            return;\n'
+        '        }\n'
+        '    }\n' + decode_anchor), 1)
+else:
+    SKIPPED.append('ASTC decode pool guard'); print('VK-PORT-SKIP ASTC decode pool guard', file=sys.stderr)
 runtime_text = '#include <atomic>\n#include <functional>\n#include <thread>\n' + runtime_text
 if runtime_path.read_text() != runtime_text:
     runtime_path.write_text(runtime_text)

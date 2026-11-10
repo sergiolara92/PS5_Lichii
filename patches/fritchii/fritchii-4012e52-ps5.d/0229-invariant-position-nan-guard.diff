@@ -1,0 +1,72 @@
+Positions invariant and float colour outputs NaN-guarded on every driver but NVIDIA's (from
+Hookshot 395547c, NX2navi patches 0007 and 0027): OoT on AMD drew holes to the bright sky where the
+colour pass's depth EQUAL test failed after the pre-pass, and glowing blocks where one NaN texel
+went through bloom. EDEN_NX2_NO_INVARIANT=1 / EDEN_NX2_NO_NAN_GUARD=1 turn them off.
+
+--- a/src/shader_recompiler/backend/spirv/emit_spirv_context_get_set.cpp
++++ b/src/shader_recompiler/backend/spirv/emit_spirv_context_get_set.cpp
+@@ -484,6 +484,11 @@
+     const AttributeType type{ctx.runtime_info.color_output_types[index]};
+     if (type == AttributeType::Float) {
+         const Id pointer{ctx.OpAccessChain(ctx.output_f32, ctx.frag_color.at(index), component_id)};
++        if (ctx.profile.guard_frag_color_nan) {
++            const Id clamped{ctx.OpNMin(ctx.F32[1], ctx.OpNMax(ctx.F32[1], value, ctx.Const(-1e30f)),
++                                        ctx.Const(1e30f))};
++            value = ctx.OpSelect(ctx.F32[1], ctx.OpIsNan(ctx.U1, value), ctx.Const(0.0f), clamped);
++        }
+         ctx.OpStore(pointer, value);
+     } else if (type == AttributeType::UnsignedInt) {
+         const Id pointer{ctx.OpAccessChain(ctx.output_u32, ctx.frag_color.at(index), component_id)};
+--- a/src/shader_recompiler/backend/spirv/spirv_emit_context.cpp
++++ b/src/shader_recompiler/backend/spirv/spirv_emit_context.cpp
+@@ -1998,6 +1998,9 @@
+             if (!Sirit::ValidId(output_position)) {
+                 output_position = DefineVariable(*this, TypeArray(F32[4], vertex_count),
+                                                  spv::BuiltIn::Position, spv::StorageClass::Output);
++                if (profile.invariant_position) {
++                    Decorate(output_position, spv::Decoration::Invariant);
++                }
+             }
+             return {output_position,
+                     static_cast<u32>(attribute) - static_cast<u32>(IR::Attribute::PositionX), true};
+@@ -2080,6 +2083,9 @@
+     if (runtime_info.convert_depth_mode || info.stores.AnyComponent(IR::Attribute::PositionX) ||
+         stage == Stage::VertexB) {
+         output_position = DefineOutput(*this, F32[4], invocations, spv::BuiltIn::Position);
++        if (profile.invariant_position) {
++            Decorate(output_position, spv::Decoration::Invariant);
++        }
+     }
+     if (info.stores[IR::Attribute::PointSize] || runtime_info.fixed_state_point_size) {
+         if (stage == Stage::Fragment) {
+--- a/src/shader_recompiler/profile.h
++++ b/src/shader_recompiler/profile.h
+@@ -106,6 +106,12 @@
+     /// Some drivers have broken support for OpVectorExtractDynamic on subgroup mask inputs
+     bool has_broken_spirv_subgroup_mask_vector_extract_dynamic{};
+     bool has_broken_spirv_subgroup_shuffle{};
++    /// gl_Position is decorated Invariant: a colour pass drawn again with depth EQUAL after a depth
++    /// pre-pass must compute the same depth, which AMD's compiler only keeps with the decoration
++    bool invariant_position{};
++    /// Float colour outputs are written without NaN or infinity (NaN to 0, the rest clamped to
++    /// +-1e30): one NaN texel spreads through bloom and blur averages into glowing blocks
++    bool guard_frag_color_nan{};
+     bool has_broken_spirv_fragment_shuffle{};
+     /// The guest's HMMA.16816.F16 runs on a cooperative matrix, in compute shaders
+     bool support_cooperative_hmma{};
+--- a/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
++++ b/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
+@@ -760,6 +760,13 @@
+         .min_ssbo_alignment = device.GetStorageBufferAlignment(),
+         .max_user_clip_distances = device.GetMaxUserClipDistances()
+     };
++    // Every driver but NVIDIA's (Hookshot 395547c, from NX2navi patches 0007 and 0027): OoT on AMD
++    // showed holes to the bright sky where the colour pass's depth EQUAL test failed, and glowing
++    // blocks from one NaN texel through bloom. EDEN_NX2_NO_INVARIANT=1 / EDEN_NX2_NO_NAN_GUARD=1: off.
++    if (device.GetDriverID() != VK_DRIVER_ID_NVIDIA_PROPRIETARY) {
++        profile.invariant_position = std::getenv("EDEN_NX2_NO_INVARIANT") == nullptr;
++        profile.guard_frag_color_nan = std::getenv("EDEN_NX2_NO_NAN_GUARD") == nullptr;
++    }
+     profile.support_cooperative_hmma =
+         device.IsCooperativeHmmaSupported() && TestCooperativeHmma(device);
+     profile.support_cooperative_hmma_16x16x16 =

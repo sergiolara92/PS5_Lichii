@@ -228,7 +228,7 @@
       "about": "Mihawk's PS5 Mesa (RADV) source",
       "kind": "git",
       "url": "https://github.com/mihawk-99/PS5_Mesa.git",
-      "commit": "f5610fe27090acd2509e5ce807140676f0b04473",
+      "commit": "7bd4aac55d8c235626028b08b2c76509098f2be7",
       "path": "../mihawk-mesa-review"
     },
     {

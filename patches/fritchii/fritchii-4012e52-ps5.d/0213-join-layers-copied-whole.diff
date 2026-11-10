@@ -1,0 +1,102 @@
+Texture joins: skip the upload when the GPU-written overlaps' copies together overwrite every level and layer
+(zortos293/Lichii#1079, for Fritchii's own overwritten_by_copies; MKW array uploads took 13-59 ms).
+
+diff --color -ru a/src/video_core/texture_cache/texture_cache.h b/src/video_core/texture_cache/texture_cache.h
+--- a/src/video_core/texture_cache/texture_cache.h
++++ b/src/video_core/texture_cache/texture_cache.h
+@@ -3781,6 +3781,33 @@
+         constexpr ImageFlagBits unusual = ImageFlagBits::Sparse | ImageFlagBits::SparseLayers |
+                                           ImageFlagBits::SparseTiles |
+                                           ImageFlagBits::UnwrittenSparse | ImageFlagBits::Unbacked;
++        // Arrays and mip chains (zortos293/Lichii#1079): the copies from overlaps the GPU wrote can
++        // each write a part of it, together all of it. Mario Kart World renders each layer of its
++        // shadow map (3072x3072x3) and colour arrays as a target of its own, then samples the array:
++        // the upload under those copies took 13-59 ms an array. Only at 1x: a rescaled copy's extent
++        // is the scaled guest mip size, which can fall short of the host mip.
++        if (image_info.type == ImageType::e2D && image_info.num_samples == 1 && !can_rescale &&
++            (image_info.resources.levels > 1 || image_info.resources.layers > 1) &&
++            False(new_image.flags & (unusual | ImageFlagBits::Converted |
++                                     ImageFlagBits::AsynchronousDecode))) {
++            std::vector<u8> written(
++                static_cast<size_t>(image_info.resources.levels * image_info.resources.layers));
++            for (const JoinCopy& copy : join_copies_to_do) {
++                const ImageBase& overlap = slot_images[copy.id];
++                if (copy.is_alias || False(overlap.flags & ImageFlagBits::GpuModified) ||
++                    overlap.info.num_samples != 1) {
++                    continue;
++                }
++                const std::optional<SubresourceBase> base = new_image.TryFindBase(overlap.gpu_addr);
++                if (!base) {
++                    continue;
++                }
++                MarkSubresourcesWrittenWhole(new_image, overlap,
++                                             MakeShrinkImageCopies(image_info, overlap.info, *base, 1, 0),
++                                             written);
++            }
++            return std::ranges::all_of(written, [](u8 whole) { return whole != 0; });
++        }
+         if (image_info.type != ImageType::e2D || image_info.resources.levels != 1 ||
+             image_info.resources.layers != 1 || image_info.num_samples != 1 ||
+             True(new_image.flags & (unusual | ImageFlagBits::Converted |
+diff --color -ru a/src/video_core/texture_cache/util.cpp b/src/video_core/texture_cache/util.cpp
+--- a/src/video_core/texture_cache/util.cpp
++++ b/src/video_core/texture_cache/util.cpp
+@@ -749,6 +749,41 @@
+     }
+ }
+ 
++void MarkSubresourcesWrittenWhole(const ImageBase& dst, const ImageBase& src,
++                                  std::span<const ImageCopy> copies, std::span<u8> written) {
++    constexpr ImageFlagBits excluded = ImageFlagBits::Rescaled | ImageFlagBits::TrimmedLevels |
++                                       ImageFlagBits::Unbacked | ImageFlagBits::UnwrittenSparse |
++                                       ImageFlagBits::SparseLayers | ImageFlagBits::SparseTiles;
++    if (dst.info.type != ImageType::e2D || src.info.type != ImageType::e2D ||
++        src.info.format != dst.info.format || src.info.astc_opaque != dst.info.astc_opaque ||
++        True((src.flags | dst.flags) & excluded)) {
++        return;
++    }
++    // Alias copies count a compressed extent in blocks, but the backends copy it as texels, so
++    // such a copy writes only part of the image.
++    if (DefaultBlockWidth(dst.info.format) != 1 || DefaultBlockHeight(dst.info.format) != 1) {
++        return;
++    }
++    const s32 layers = dst.info.resources.layers;
++    for (const ImageCopy& copy : copies) {
++        const s32 level = copy.dst_subresource.base_level;
++        if (level < 0 || level >= dst.info.resources.levels) {
++            continue;
++        }
++        const Extent3D size = MipSize(dst.info.size, level);
++        if (copy.dst_offset != Offset3D{} || copy.extent.width < size.width ||
++            copy.extent.height < size.height) {
++            continue;
++        }
++        const s32 first = (std::max)(copy.dst_subresource.base_layer, 0);
++        const s32 last =
++            (std::min)(copy.dst_subresource.base_layer + copy.dst_subresource.num_layers, layers);
++        for (s32 layer = first; layer < last; ++layer) {
++            written[static_cast<size_t>(level * layers + layer)] = 1;
++        }
++    }
++}
++
+ boost::container::small_vector<ImageCopy, 16> MakeShrinkImageCopies(const ImageInfo& dst,
+                                                                     const ImageInfo& src,
+                                                                     SubresourceBase base,
+diff --color -ru a/src/video_core/texture_cache/util.h b/src/video_core/texture_cache/util.h
+--- a/src/video_core/texture_cache/util.h
++++ b/src/video_core/texture_cache/util.h
+@@ -65,6 +65,13 @@
+ 
+ [[nodiscard]] ImageViewType RenderTargetImageViewType(const ImageInfo& info) noexcept;
+ 
++/// Sets `written[level * layers + layer]` for each level and layer of `dst` that `copies` from
++/// `src` write whole, unscaled and from the origin. Sets none when the images differ in 2D format,
++/// the format is compressed, or either image is rescaled or lacks part of its host memory (sparse,
++/// unbacked, trimmed levels). From zortos293/Lichii#1079.
++void MarkSubresourcesWrittenWhole(const ImageBase& dst, const ImageBase& src,
++                                  std::span<const ImageCopy> copies, std::span<u8> written);
++
+ [[nodiscard]] boost::container::small_vector<ImageCopy, 16> MakeShrinkImageCopies(
+     const ImageInfo& dst, const ImageInfo& src, SubresourceBase base, u32 up_scale = 1,
+     u32 down_shift = 0);

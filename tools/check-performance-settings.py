@@ -4,7 +4,7 @@
 
 headless/preferences_check.cpp checks how they are stored. This checks that the session reads
 them for the game it starts and hands each one to the emulator, outside the development-only
-dev-settings block, and that the block list is off unless the settings turn it on.
+dev-settings block, and that the block list follows the settings (on by default).
 """
 from pathlib import Path
 
@@ -18,7 +18,7 @@ release = main[:begin] + main[end:]  # what a release build compiles
 assert 'const auto speed = Eden::LoadPerformance(eden_game_title_id(library_entry.c_str()));' in release
 # Preserve the selected library identity before a folder entry becomes an NSO.
 snapshot = release.index('const std::string library_entry = selected_game;')
-route = release.index('if (!research_selected && Eden::IsFolderGameEntry(selected_game))')
+route = release.index('if (!research_selected && UsesSwitch2Route(selected_game))')
 translated = release.index('selected_game = research.TakeEntryPoint();', route)
 assert snapshot < route < translated < release.index('const auto speed = Eden::LoadPerformance(eden_game_title_id(library_entry.c_str()));')
 
@@ -50,10 +50,10 @@ for statement in (
 # Nothing sets the shaders back to synchronous after the setting was applied.
 assert 'Settings::values.use_asynchronous_shaders = false;' not in main
 
-# The block list: off unless the settings turn it on, and block-list.txt still turns it on.
+# The block list: on by default (the settings can turn it off), and block-list.txt still turns it on.
 assert 'if (!dev_block_list) Eden::JitList::enabled = speed.block_list;' in release
 store = (root / 'headless/settings_store.h').read_text()
-assert 'bool block_list = false;' in store and 'bool block_list = true;' not in store
+assert 'bool block_list = true;' in store and 'bool block_list = false;' not in store
 assert 'if (std::filesystem::exists(Eden::AppFile("block-list.txt"))) Eden::JitList::enabled = true;' in release
 
 # Settings > Performance in the launcher: its eight switches are the general values.

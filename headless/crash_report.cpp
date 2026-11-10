@@ -31,6 +31,7 @@ std::int32_t sceKernelAvailableDirectMemorySize(std::int64_t, std::int64_t, std:
 std::size_t eden_heap_committed(void);
 std::size_t eden_heap_large_held(unsigned* blocks);
 std::size_t eden_heap_last_failure(unsigned* why, std::size_t* count);
+const char* eden_guest_last_refusal(unsigned long long* count) noexcept;
 #endif
 // The app's code, from the link (tools/unwind.ld).
 extern const char __eden_text_start[];
@@ -380,6 +381,14 @@ void Compose(const Kind* kind, int code, std::uint64_t address, const Registers&
             }
             t.Put(why < sizeof(kWhy) / sizeof(kWhy[0]) ? kWhy[why] : "");
             t.Put('\n');
+        }
+        // A guest memory write that found no block faults again in the game's code: the reason.
+        unsigned long long declined = 0;
+        if (const char* line = eden_guest_last_refusal(&declined)) {
+            t.Put("guest memory refused: ");
+            t.Dec(declined);
+            t.Put(declined == 1 ? " write, the last: " : " writes, the last: ");
+            t.Put(line);
         }
     }
 #endif

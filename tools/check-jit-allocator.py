@@ -150,7 +150,7 @@ int main() {
             assert(mincore(const_cast<unsigned char*>(gone), page, &state)==-1 && errno==ENOMEM);
         }
 #ifdef EDEN_JIT_ALIAS_NATIVE
-        assert(handles.size()==4);
+        assert(handles.size()==4*8);  // four 16 MiB steps, each taken as 2 MiB pieces
         for (int fd : handles) { errno=0; assert(fcntl(fd,F_GETFD)==-1 && errno==EBADF); }
         reserve_ok=false;
 #endif
@@ -180,6 +180,6 @@ with tempfile.TemporaryDirectory() as temp:
             '-I'+str(scratch/'native-local/headless/include'),
             '-I'+str(scratch/'source/.cache/cpm/xbyak/v7.40.1'),str(cpp),
             *(['-DEDEN_JIT_ALIAS_NATIVE=1','-DPS5_NATIVE=1','-Wl,--wrap=mprotect'] if native_mock else []),
-            str(root/'src/memory_pages.cpp'),'-o',str(exe)],check=True)
+            str(root/'src/memory_pages.cpp'),'-llz4','-o',str(exe)],check=True)
         subprocess.run([str(exe)],check=True, cwd=temp)
 print('Production JIT aliases: 512/64/64/16 MiB, overflow, RX write/RW execute faults, live rewrite, a cache that takes its memory as it fills, both-view release and native API partial-failure cleanup PASS (host backend/mocked native APIs)')

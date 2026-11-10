@@ -177,6 +177,15 @@ unsigned eden_heap_arenas_created(void) {
 
 static atomic_size_t eden_heap_plugged;
 
+/* EDEN_HEAP_DEEP_TRIM=0 (dev-settings env:EDEN_HEAP_DEEP_TRIM=0): the trim and the thread caches as
+ * before 2026-11-09. Read as arenas are made (after the settings, before the threads that matter). */
+#include <stdlib.h>
+static atomic_int eden_heap_shallow;
+static void eden_heap_read_switch(void) {
+  const char *text = getenv("EDEN_HEAP_DEEP_TRIM");
+  atomic_store_explicit(&eden_heap_shallow, text != NULL && text[0] == '0', memory_order_relaxed);
+}
+
 /* Memory the heap's pieces hold now: the pieces, less the room they gave back (plugs). */
 size_t eden_heap_committed(void) {
   return ((size_t)atomic_load_explicit(&eden_heap_pieces_used, memory_order_relaxed) << EDEN_HEAP_PIECE_SHIFT) -
@@ -489,7 +498,7 @@ size_t eden_heap_last_failure(unsigned *why, size_t *count) {
  * commits a plug's pages again and frees the block: the mspace then has that room as before. */
 size_t eden_heap_decommit(void *address, size_t size); /* bytes given back from the start */
 #define EDEN_HEAP_PAGE ((uintptr_t)2 << 20)
-#define EDEN_HEAP_PLUGS 512u
+#define EDEN_HEAP_PLUGS 2048u /* a burst leaves its room in stretches of a few MiB */
 static struct {
   void *block;
   char *pages;  /* the first page given back */
@@ -559,25 +568,38 @@ size_t eden_heap_trim(size_t keep, size_t most) {
   if (budget > most)
     budget = most;
   size_t given = 0;
+  int refused = 0;
+  const int shallow = atomic_load_explicit(&eden_heap_shallow, memory_order_relaxed);
   const unsigned count = atomic_load_explicit(&eden_heap_space_count, memory_order_acquire);
-  for (unsigned i = count; i-- > 0 && given < budget && eden_heap_plug_count < EDEN_HEAP_PLUGS;) {
-    /* Stretches of 4 MiB or more: each has a whole large page inside. */
-    for (size_t size = (size_t)64 << 20; size >= ((size_t)4 << 20) && given < budget &&
+  for (unsigned i = count; i-- > 0 && !refused && given < budget && eden_heap_plug_count < EDEN_HEAP_PLUGS;) {
+    /* Stretches of 64, 48, 32 ... 4, 3 MiB (halving down to 4 MiB with EDEN_HEAP_DEEP_TRIM=0): after a
+     * burst most free room is in stretches of a few MiB. One of 3 MiB may hold no whole page; it is held
+     * aside so the next try finds another, and freed after this space. */
+    void *misses[64];
+    unsigned missed = 0;
+    for (size_t size = (size_t)64 << 20; size > (shallow ? ((size_t)3 << 20) : EDEN_HEAP_PAGE) && given < budget &&
                                          eden_heap_plug_count < EDEN_HEAP_PLUGS;) {
       char *block = sceLibcMspaceMalloc(eden_heap_spaces[i], size);
-      if (block == NULL) {
-        size >>= 1;
+      char *first = (char *)(((uintptr_t)block + EDEN_HEAP_PAGE - 1) & ~(EDEN_HEAP_PAGE - 1));
+      char *end = block == NULL ? first
+                                : (char *)(((uintptr_t)block + sceLibcMspaceMallocUsableSize(block)) & ~(EDEN_HEAP_PAGE - 1));
+      if (block != NULL && end <= first && missed < 64) {
+        misses[missed++] = block;
         continue;
       }
-      char *first = (char *)(((uintptr_t)block + EDEN_HEAP_PAGE - 1) & ~(EDEN_HEAP_PAGE - 1));
-      char *end = (char *)(((uintptr_t)block + sceLibcMspaceMallocUsableSize(block)) & ~(EDEN_HEAP_PAGE - 1));
+      if (block == NULL || end <= first) {
+        if (block != NULL)
+          sceLibcMspaceFree(eden_heap_spaces[i], block);
+        size = shallow ? size >> 1 : size % 3 == 0 ? size / 3 * 2 : size / 4 * 3;
+        continue;
+      }
       const size_t bytes = eden_heap_decommit(first, (size_t)(end - first));
       if (bytes == 0) {
         /* The system keeps the memory (or dev-settings heap_trim=off): stop, and leave the
          * placement of small requests as it was. */
         sceLibcMspaceFree(eden_heap_spaces[i], block);
-        atomic_flag_clear_explicit(&eden_heap_grow_lock, memory_order_release);
-        return given;
+        refused = 1;
+        break;
       }
       eden_heap_plugs[eden_heap_plug_count].block = block;
       eden_heap_plugs[eden_heap_plug_count].pages = first;
@@ -587,6 +609,12 @@ size_t eden_heap_trim(size_t keep, size_t most) {
       atomic_fetch_add_explicit(&eden_heap_plugged, bytes, memory_order_relaxed);
       given += bytes;
     }
+    while (missed > 0)
+      sceLibcMspaceFree(eden_heap_spaces[i], misses[--missed]);
+  }
+  if (refused) {
+    atomic_flag_clear_explicit(&eden_heap_grow_lock, memory_order_release);
+    return given;
   }
   /* Small requests start again at the first space: following the newest one, as they do between
    * trims, they kept the last pieces in use (Mario Kart World in a race: the last three pieces
@@ -706,6 +734,7 @@ static void *eden_heap_main(int kind, size_t a, size_t b) {
 /* Allocate and register one arena block from the heap (NULL on failure). */
 static void *eden_heap_create_arena(void) {
   eden_heap_create_acquire();
+  eden_heap_read_switch();
   void *arena = NULL;
   const unsigned count = atomic_load_explicit(&eden_heap_arena_count, memory_order_relaxed);
   if (count < EDEN_HEAP_MAX_ARENAS) {
@@ -925,7 +954,12 @@ void *__wrap_realloc(void *address, size_t size) {
 void __wrap_free(void *address) {
   if (eden_heap_in_range(address)) {
     const size_t usable = sceLibcMspaceMallocUsableSize(address);
-    if (eden_tcache_keep(address, usable))
+    /* Only arena blocks are cached: a pool thread idle after a burst (pipeline compiles) kept up to 8,000
+     * freed blocks of the spaces, one every few MiB, and no whole free page was left there to give back
+     * (OOT's cold-cache boot on the Pro: 3.7 GB of pieces for 1.4 GB in use, then the pool ran dry). */
+    if ((atomic_load_explicit(&eden_heap_slots[eden_heap_slot(address)], memory_order_relaxed) != NULL ||
+         atomic_load_explicit(&eden_heap_shallow, memory_order_relaxed)) &&
+        eden_tcache_keep(address, usable))
       return;
     eden_heap_medium(address, usable, -1);
     eden_heap_account(-(long)usable, -1);

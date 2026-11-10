@@ -103,6 +103,17 @@ namespace {
 extern "C" void ps5_opengl_heap_snapshot(const char*, unsigned);
 extern "C" std::int64_t sceKernelGetDirectMemorySize();
 extern "C" std::int32_t sceKernelAvailableFlexibleMemorySize(std::size_t*);
+extern "C" int eden_restart_app_with(const char** args);  // src/lifecycle.c
+extern "C" std::size_t eden_heap_committed(void);              // headless/heap_arenas.inc
+extern "C" std::size_t eden_heap_large_held(unsigned* blocks);
+// Start again after a shader cache load only when the heap came out of it bloated, and not twice
+// running: a boot that reads every pipeline back holds little however long it takes.
+constexpr bool RestartAfterCacheLoad(std::size_t held_mib, std::size_t limit_mib, bool restarted_last) {
+    return limit_mib != 0 && held_mib > limit_mib && !restarted_last;
+}
+static_assert(!RestartAfterCacheLoad(1658, 2048, false));  // OoT read back (it took 222-257 s)
+static_assert(RestartAfterCacheLoad(2800, 2048, false));   // OoT built from scratch
+static_assert(!RestartAfterCacheLoad(2800, 2048, true) && !RestartAfterCacheLoad(2800, 0, false));
 #else
 #include <malloc.h>
 #include "mock_devices.h"
@@ -306,6 +317,31 @@ static void MigrateSandboxData() {
                                            std::filesystem::copy_options::skip_existing, error);
         Eden::Report("data migration", error ? ("settings failed: " + error.message()).c_str() : "settings copied");
     }
+}
+#endif
+
+// The pipeline cache files the emulator hands the driver (vulkan_pipelines.*) knew neither the app
+// version nor the driver that wrote them: a pipeline from an older build's file crashed every start
+// (issue #1: a task+mesh pipeline back without its mesh shader) until the shader folder was
+// deleted. When the app version or the driver changes (EDEN_DRIVER_CACHE_KEY) they go. The driver's
+// own disk cache stays: building OoT's 1,683 pipelines again took 815 s at 2x, and that cache
+// checks what it holds itself (PS5_Mesa 7bd4aac). The games' shader lists stay.
+#ifdef PS5_NATIVE
+static void ClearStaleDriverCaches() {
+    const std::string stamp = std::string{Eden::kDataDir} + "/cache/driver-cache-key.txt";
+    std::string made_by;
+    if (std::ifstream in{stamp}; in) std::getline(in, made_by);
+    if (made_by == EDEN_DRIVER_CACHE_KEY) return;
+    std::error_code error;
+    std::uintmax_t removed = 0;
+    const std::filesystem::path shaders{Eden::UserDir() + "/cache/shader"};
+    for (std::filesystem::recursive_directory_iterator it{shaders, error}, end; !error && it != end; it.increment(error))
+        if (it->is_regular_file() && it->path().filename().string().starts_with("vulkan_pipelines"))
+            removed += std::filesystem::remove(it->path(), error) ? 1 : 0;
+    std::ofstream{stamp} << EDEN_DRIVER_CACHE_KEY << '\n';
+    const std::string detail = (made_by.empty() ? std::string{"none"} : made_by) + " -> " EDEN_DRIVER_CACHE_KEY ", " +
+                               std::to_string(removed) + " files removed";
+    Eden::Report("pipeline cache files renewed", detail.c_str());
 }
 #endif
 
@@ -526,6 +562,7 @@ int main(int argc, char** argv) {
                     std::rename(before.c_str(), cache.c_str()) != 0)
                     Eden::Report("cache", "The driver's shader cache could not move to the data folder; it starts empty");
                 (void)mkdir(cache.c_str(), 0777);
+                ClearStaleDriverCaches();
                 setenv("MESA_SHADER_CACHE_DIR", cache.c_str(), 1);
                 // Mesa caps its cache at 1 GiB, shared by every game, and past that each new entry
                 // drops an older one: with a large game (13,000 pipelines) among them, every start
@@ -624,6 +661,9 @@ int main(int argc, char** argv) {
         }
         // A game that faulted early in its boot is restarted (at most four times per launch).
         std::string relaunch_game;
+        // A session whose pipelines were all built from scratch: the app starts again into this
+        // game once the session has stopped (the cold-build restart below).
+        std::string cold_restart_rom;
         unsigned guest_fault_retries = 0;
 #ifdef EDEN_DEV_VULKAN
         std::string recovery_mode;
@@ -674,6 +714,16 @@ int main(int argc, char** argv) {
 #endif
         for (;;) {
         Eden::StopLimit::End();  // whatever game ran before is gone
+#ifdef PS5_NATIVE
+        if (!cold_restart_rom.empty()) {
+            // The session that built the pipelines has stopped and released the driver, whose
+            // disk cache has now written them all: a fresh process reads them back.
+            const std::string rom = "--rom=" + std::exchange(cold_restart_rom, {});
+            const char* args[] = {rom.c_str(), nullptr};
+            std::fflush(nullptr);
+            eden_restart_app_with(args);
+        }
+#endif
 #ifdef EDEN_PS5_OPENGL
         std::error_code trim_error;
         const auto cache_entries = Eden::ReadNativeDirectory(native_shader_cache, trim_error);
@@ -2223,6 +2273,41 @@ int main(int argc, char** argv) {
                         std::chrono::steady_clock::now() - load_start).count();
                     Eden::Report("loader", fmt::format("Shader cache ready: {} pipelines in {} ms",
                                                        total.load(), load_ms).c_str());
+#ifdef PS5_NATIVE
+                    // Pipelines built from scratch (a new driver, a fresh install) leave the heap the
+                    // compilers used fragmented: OoT's 1,841 took it to 3-4.6 GB, of which it kept
+                    // 2.8-4.4 GB, and the save load then found no memory (issue #1). The game has run
+                    // nothing yet, so the app starts again once into the same game: that boot reads
+                    // the pipelines from the driver's cache in about a minute, with a clean heap. The
+                    // session stops the normal way first (the loop's top restarts): the driver's
+                    // disk cache writes on a queue of its own and the pipeline file is saved at
+                    // intervals, and a restart at once lost ~1,100 of the 1,852 (the next boot built
+                    // them again for 210 s). The sign is the memory the heap holds now, not the time
+                    // the load took: OoT reads its pipelines back in 222-257 s, and a time limit
+                    // restarted every second boot. A marker, kept until a load comes out under the
+                    // limit, keeps it to once. EDEN_COLD_BUILD_RESTART=0: off; another number: the
+                    // limit in MiB.
+                    {
+                        const std::string marker = Eden::LogFile("cold-build-restart.txt");
+                        const char* restart_switch = std::getenv("EDEN_COLD_BUILD_RESTART");
+                        // shortcut: 2 GiB sits between a read-back (under 1,658 MiB with the save
+                        // loaded) and the 2.8-4.4 GB measured before the heap holders were trimmed;
+                        // set it from the "heap holds" line of the next build from scratch.
+                        const std::size_t limit_mib = restart_switch ? std::strtoul(restart_switch, nullptr, 10) : 2048;
+                        const std::size_t held_mib = (eden_heap_committed() + eden_heap_large_held(nullptr)) >> 20;
+                        Eden::Report("loader", fmt::format("Shader cache ready: the heap holds {} MiB (starting "
+                                                           "again over {})", held_mib, limit_mib).c_str());
+                        if (library_entry.empty() || held_mib <= limit_mib) {
+                            std::remove(marker.c_str());
+                        } else if (RestartAfterCacheLoad(held_mib, limit_mib, Eden::FileExists(marker))) {
+                            std::ofstream{marker} << library_entry << '\n';
+                            Eden::Report("loader", "Shaders built from scratch: starting again once, with the memory "
+                                                   "their building used given back");
+                            cold_restart_rom = library_entry;
+                            left_while_loading = true;
+                        }
+                    }
+#endif
                     std::puts("EDEN_SHADER_CACHE_LOADED");
                     std::fflush(stdout);
                 }

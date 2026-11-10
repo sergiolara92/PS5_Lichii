@@ -1,0 +1,24 @@
+PS5: 6 pipeline builder threads instead of one per core (EDEN_NX2_PIPELINE_WORKERS): a boot building every
+pipeline on 15 took the shared heap to 4.6 GB, and the save load then found no memory (issue #1).
+
+diff --color -ru a/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp b/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
+--- a/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
++++ b/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
+@@ -537,6 +537,17 @@
+ size_t GetTotalPipelineWorkers() {
+     const size_t max_core_threads =
+         std::max<size_t>(static_cast<size_t>(std::thread::hardware_concurrency()), 2ULL) - 1ULL;
++#ifdef PS5_NATIVE
++    // Each compile holds hundreds of MB of the heap the guest and the GPU share the pool with: a
++    // boot that built all of OoT's 1,841 pipelines on 15 of these (and 4 prebuild threads) took the
++    // heap to 4.6 GB, which it never got back whole, and the save load then found no memory (issue
++    // #1). The console has 13 cores for the app. EDEN_NX2_PIPELINE_WORKERS=N (1-16) sets them.
++    size_t cap = 6;
++    if (const char* value = std::getenv("EDEN_NX2_PIPELINE_WORKERS")) {
++        cap = std::clamp<size_t>(static_cast<size_t>(std::strtoull(value, nullptr, 10)), 1, 16);
++    }
++    return std::min(max_core_threads, cap);
++#endif
+ #ifdef __ANDROID__
+     const int configured = AndroidSettings::values.pipeline_worker_count.GetValue();
+     const int clamped = std::clamp(configured, 2, 8);

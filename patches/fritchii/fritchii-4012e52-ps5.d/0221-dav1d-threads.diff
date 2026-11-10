@@ -1,0 +1,38 @@
+Switch 2 movies: libdav1d decodes on 4 threads (EDEN_NX2_DAV1D_THREADS) instead of the count FFmpeg reads on
+the PS5, which can be 1 (OoT's AV1 intro at ~80% speed on a base PS5, issue #1).
+
+diff --color -ru a/src/video_core/host1x/nx2_video_decoder.cpp b/src/video_core/host1x/nx2_video_decoder.cpp
+--- a/src/video_core/host1x/nx2_video_decoder.cpp
++++ b/src/video_core/host1x/nx2_video_decoder.cpp
+@@ -1,10 +1,13 @@
+ // SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
+ // SPDX-License-Identifier: GPL-3.0-or-later
+ 
++#include <algorithm>
+ #include <array>
++#include <cstdlib>
+ #include <cstring>
+ #include <optional>
+ #include <set>
++#include <string_view>
+ 
+ #include "common/logging.h"
+ #include "common/settings.h"
+@@ -140,6 +143,17 @@
+         return;
+     }
+     impl->context.emplace(*impl->decoder);
++    // libdav1d sizes its threads from FFmpeg's CPU count when none is given, which on the PS5 can
++    // come back as 1: OoT's 1080p60 AV1 intro then decoded at ~80% speed on a base console, its
++    // picture falling 38 s behind the sound. Pictures carry their timestamps (Receive), so the
++    // frames dav1d holds back while threading come out in order. EDEN_NX2_DAV1D_THREADS=N sets them.
++    if (std::string_view{impl->decoder->GetCodec()->name} == "libdav1d") {
++        int threads = 4;
++        if (const char* value = std::getenv("EDEN_NX2_DAV1D_THREADS")) {
++            threads = std::clamp(std::atoi(value), 1, 8);
++        }
++        impl->context->GetCodecContext()->thread_count = threads;
++    }
+     if (Settings::values.nvdec_emulation.GetValue() == Settings::NvdecEmulation::Gpu) {
+         impl->hardware.emplace();
+         impl->hardware->InitializeForDecoder(*impl->context, *impl->decoder);

@@ -1,0 +1,21 @@
+Vulkan blits: the blit sampler clamps to the edge instead of a white border, so a bilinear scaling
+blit no longer lights the edges of what it scales (the light border around OoT's title movie, issue #1).
+
+diff -ru a/src/video_core/renderer_vulkan/blit_image.cpp b/src/video_core/renderer_vulkan/blit_image.cpp
+--- a/src/video_core/renderer_vulkan/blit_image.cpp
++++ b/src/video_core/renderer_vulkan/blit_image.cpp
+@@ -341,9 +341,11 @@
+     .magFilter = filter,
+     .minFilter = filter,
+     .mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
+-    .addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+-    .addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+-    .addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
++    // The 2D engine never reads outside the source: clamp to the edge texels. Clamping to a
++    // white border lit the edges of every bilinear scaling blit (OoT's title movie, issue #1).
++    .addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
++    .addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
++    .addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+     .mipLodBias = 0.0f,
+     .anisotropyEnable = VK_FALSE,
+     .maxAnisotropy = 0.0f,

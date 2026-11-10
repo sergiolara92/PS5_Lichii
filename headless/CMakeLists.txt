@@ -2201,15 +2201,20 @@ string(REPLACE "${optimized_fill_site}"
     pool_source "${pool_source}")
 write_derived("${PORT_BUILD_DIR}/k_memory_manager.cpp" "${pool_source}")
 file(READ "${PROJECT_SOURCE_DIR}/src/core/hle/kernel/k_page_heap.cpp" page_heap_source)
-set(page_heap_free_site "void KPageHeap::Free(KPhysicalAddress addr, size_t num_pages) {\n    // Freeing no pages is a no-op.\n    if (num_pages == 0) {\n        return;\n    }\n")
-string(FIND "${page_heap_source}" "${page_heap_free_site}" page_heap_free_at)
-if(page_heap_free_at LESS 0)
-    message(FATAL_ERROR "Pinned page heap free changed; review the guest memory service.")
+# Freed guest pages give their host memory back once a whole 2 MiB slot is free. Pages come back
+# to the heap in pieces (a region's tail, a page group's blocks), so a hook on Free saw almost no
+# whole slot. The heap merges free buddies into larger blocks under its pool lock; once a block of
+# 2 MiB or more is free, the slots it covers go back (heydemoura/EglantinePS5 e01b2d9). A smaller
+# free block is cleared where its slot is held (GuestMemoryFreedPart), for the scanner to give back.
+set(page_heap_free_block_site "void KPageHeap::FreeBlock(KPhysicalAddress block, s32 index) {\n    do {\n        block = m_blocks[index++].PushBlock(block);\n    } while (block != 0);\n}\n")
+string(FIND "${page_heap_source}" "${page_heap_free_block_site}" page_heap_free_block_at)
+if(page_heap_free_block_at LESS 0)
+    message(FATAL_ERROR "Pinned page heap FreeBlock changed; review the guest memory service.")
 endif()
-string(REPLACE "${page_heap_free_site}"
-    "${page_heap_free_site}    ::Common::GuestMemoryFreed(GetInteger(addr) - Core::DramMemoryMap::Base, num_pages * PageSize);\n"
+string(REPLACE "${page_heap_free_block_site}"
+    "void KPageHeap::FreeBlock(KPhysicalAddress block, s32 index) {\n    for (;;) {\n        const KPhysicalAddress merged = m_blocks[index].PushBlock(block);\n        if (merged == 0) {\n            if (const size_t size = m_blocks[index].GetSize(); size >= ::Common::GuestFreedSlotBytes) {\n                ::Common::GuestMemoryFreed(GetInteger(block) - Core::DramMemoryMap::Base, size);\n            } else {\n                ::Common::GuestMemoryFreedPart(GetInteger(block) - Core::DramMemoryMap::Base, size);\n            }\n            return;\n        }\n        block = merged;\n        ++index;\n    }\n}\n"
     page_heap_source "${page_heap_source}")
-string(PREPEND page_heap_source "#include <cstddef>\n#include <cstdint>\n#include \"core/device_memory.h\"\nnamespace Common { void GuestMemoryFreed(std::uint64_t offset, std::size_t bytes) noexcept; }\n")
+string(PREPEND page_heap_source "#include <cstddef>\n#include <cstdint>\n#include \"core/device_memory.h\"\nnamespace Common { void GuestMemoryFreed(std::uint64_t offset, std::size_t bytes) noexcept; void GuestMemoryFreedPart(std::uint64_t offset, std::size_t bytes) noexcept; inline constexpr std::size_t GuestFreedSlotBytes = std::size_t{2} << 20; }\n")
 write_derived("${PORT_BUILD_DIR}/k_page_heap.cpp" "${page_heap_source}")
 get_target_property(pool_core_sources core SOURCES)
 list(REMOVE_ITEM pool_core_sources hle/kernel/k_memory_manager.cpp hle/kernel/k_page_heap.cpp)
@@ -3579,8 +3584,19 @@ if(NOT app_version MATCHES "^[0-9][0-9]\\.[0-9][0-9][0-9]\\.[0-9][0-9][0-9]$")
     message(FATAL_ERROR "sce_sys/param.json: contentVersion must be NN.NNN.NNN, not '${app_version}'")
 endif()
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${PORT_ROOT}/sce_sys/param.json")
+# The pipeline cache files the emulator hands the driver are only valid for the driver that made
+# them: a key of the app version and the driver archive, which the app compares with the one the
+# files were made with (headless/main.cpp, ClearStaleDriverCaches).
+set(driver_archive "${PORT_ROOT}/build/radv-isolated/libvulkan_radeon.ps5.a")
+if(EXISTS "${driver_archive}")
+    file(SHA256 "${driver_archive}" driver_digest)
+    string(SUBSTRING "${driver_digest}" 0 16 driver_digest)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${driver_archive}")
+else()
+    set(driver_digest "none")
+endif()
 write_derived("${PORT_BUILD_DIR}/version/app_version.h"
-    "// Generated from sce_sys/param.json (contentVersion).\n#pragma once\n#define EDEN_APP_VERSION \"${app_version}\"\n")
+    "// Generated from sce_sys/param.json (contentVersion).\n#pragma once\n#define EDEN_APP_VERSION \"${app_version}\"\n#define EDEN_DRIVER_CACHE_KEY \"${app_version}-${driver_digest}\"\n")
 target_include_directories(eden-headless PRIVATE "${PORT_BUILD_DIR}/version")
 target_link_libraries(eden-headless PRIVATE core eden-pad)
 # Compound is an additional CPU-core diagnostic. It does not replace Eden's

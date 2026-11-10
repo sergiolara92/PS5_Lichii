@@ -110,7 +110,7 @@ with tempfile.TemporaryDirectory(prefix='eden-startup-') as directory:
                     str(directory / 'check.cpp'), str(root / 'headless/performance.cpp'),
                     str(root / 'src/memory_pages.cpp'), str(source / 'common/cpu_features.cpp'),
                     str(source / 'common/x64/rdtsc.cpp'), str(source / 'common/steady_clock.cpp'),
-                    '-Wl,--wrap=clock_gettime', '-o', str(executable)], check=True)
+                    '-Wl,--wrap=clock_gettime', '-llz4', '-o', str(executable)], check=True)
     output = subprocess.check_output([str(executable)], text=True, timeout=15)
     assert 'EDEN_PERF_CPU_CLOCK_CHECK valid=1 ' in output
     assert 'EDEN_PERF_CPU_CLOCK_CHECK valid=0 ' in output
@@ -120,7 +120,7 @@ with tempfile.TemporaryDirectory(prefix='eden-startup-') as directory:
     snapshots = output.split('EDEN_PERF_SAMPLE ')[1:]
     assert len(snapshots) == 5
     for sample in snapshots:
-        assert sample.count('EDEN_PERF_WORKER ') == 7 and sample.count('EDEN_PERF_PROGRESS ') == 4
+        assert sample.count('EDEN_PERF_WORKER ') == 9 and sample.count('EDEN_PERF_PROGRESS ') == 4
         assert 'core=1 compilations=1 ' in sample
         assert re.search(r'name=CPUCore_2 cpu_ns=-\d+', sample)
     assert int(re.search(r'name=CPUCore_1 cpu_ns=(\d+)', snapshots[0])[1]) > 0

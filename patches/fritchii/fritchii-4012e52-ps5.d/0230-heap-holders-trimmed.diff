@@ -1,0 +1,134 @@
+Three heap holders give their memory back (measured on OoT, 2026-11-10: 1,735 MiB live in play):
+the texture cache's upload scratch buffers are freed every 256 frames when over 8 MiB and the ASTC
+scan buffer after a scan over 8 MiB (64 + 56 MiB were kept from the save load on); a shader IR
+pool keeps at most 4 MiB between shaders (113 MiB were kept in six pools); the descriptor update
+queues start at an eighth of their size and grow when a frame needs more (120 MiB were held).
+
+--- a/src/shader_recompiler/object_pool.h
++++ b/src/shader_recompiler/object_pool.h
+@@ -3,6 +3,7 @@
+ 
+ #pragma once
+ 
++#include <algorithm>
+ #include <memory>
+ #include <type_traits>
+ #include <utility>
+@@ -37,9 +38,12 @@
+         Chunk& root{chunks.front()};
+         if (root.used_objects == root.num_objects) {
+             // Root chunk has been filled, squash allocations into it
++            // Up to MaxKeptBytes: one huge shader otherwise leaves its whole IR allocated for the
++            // session (OoT kept 113 MiB in six pools after the boot build).
++            const size_t kept{(std::max)(new_chunk_size, MaxKeptBytes / sizeof(Storage))};
+             const size_t total_objects{root.num_objects + new_chunk_size * (chunks.size() - 1)};
+             chunks.clear();
+-            chunks.emplace_back(total_objects);
++            chunks.emplace_back((std::min)(total_objects, kept));
+         } else {
+             root.Release();
+             chunks.resize(1);
+@@ -49,6 +53,8 @@
+     }
+ 
+ private:
++    static constexpr size_t MaxKeptBytes = 4 << 20;
++
+     struct NonTrivialDummy {
+         NonTrivialDummy() noexcept {}
+     };
+--- a/src/tests/video_core/shader_object_pool.cpp
++++ b/src/tests/video_core/shader_object_pool.cpp
+@@ -33,6 +33,26 @@
+     REQUIRE(Counted::live == 0);
+ }
+ 
++TEST_CASE("ObjectPool::ReleaseContents keeps a bounded chunk and stays usable", "[shader]") {
++    struct Big {
++        explicit Big(int value_) : value{value_} {}
++        int value;
++        char pad[1 << 20];
++    };
++    Shader::ObjectPool<Big> pool{2};
++    // 16 MiB of objects, over the 4 MiB the pool may keep
++    for (int round = 0; round < 3; ++round) {
++        Big* first{};
++        for (int index = 0; index < 16; ++index) {
++            Big* const object{pool.Create(index)};
++            first = first ? first : object;
++            REQUIRE(object->value == index);
++        }
++        REQUIRE(first->value == 0);
++        pool.ReleaseContents();
++    }
++}
++
+ TEST_CASE("ObjectPool stays usable after Free", "[shader]") {
+     Counted::live = 0;
+     {
+--- a/src/video_core/renderer_vulkan/vk_update_descriptor.cpp
++++ b/src/video_core/renderer_vulkan/vk_update_descriptor.cpp
+@@ -22,7 +22,7 @@
+ UpdateDescriptorQueue::UpdateDescriptorQueue(const Device& device_, size_t frame_payload_size_,
+                                              bool supports_descriptor_buffer_)
+     : device{device_}, frame_payload_size{frame_payload_size_},
+-      maximum_frame_payload_size{frame_payload_size_ * 4},
++      maximum_frame_payload_size{frame_payload_size_ * MAXIMUM_GROWTH},
+       supports_descriptor_buffer{supports_descriptor_buffer_},
+       payload(std::make_unique_for_overwrite<DescriptorUpdateEntry[]>(frame_payload_size_ * FRAMES_IN_FLIGHT))
+ {
+--- a/src/video_core/renderer_vulkan/vk_update_descriptor.h
++++ b/src/video_core/renderer_vulkan/vk_update_descriptor.h
+@@ -42,8 +42,12 @@
+     static constexpr size_t FRAMES_IN_FLIGHT = 8;
+ 
+ public:
+-    static constexpr size_t GUEST_FRAME_PAYLOAD_SIZE = 0x80000;
+-    static constexpr size_t COMPUTE_FRAME_PAYLOAD_SIZE = 0x20000;
++    // Starting sizes: 12 and 3 MiB over the frames in flight (96 and 24 before, held whether a
++    // game used them or not). Acquire grows a queue up to MAXIMUM_GROWTH times its start, the
++    // ceilings the larger starts had.
++    static constexpr size_t GUEST_FRAME_PAYLOAD_SIZE = 0x10000;
++    static constexpr size_t COMPUTE_FRAME_PAYLOAD_SIZE = 0x4000;
++    static constexpr size_t MAXIMUM_GROWTH = 32;
+ 
+     explicit UpdateDescriptorQueue(const Device& device_, size_t frame_payload_size_,
+                                    bool supports_descriptor_buffer_ = false);
+--- a/src/video_core/texture_cache/texture_cache_base.h
++++ b/src/video_core/texture_cache/texture_cache_base.h
+@@ -196,6 +196,8 @@
+ 
+     static constexpr u32 LayerUploadMinSize = 64U << 20;
+     static constexpr size_t LargeScratchCapacity = 64U << 20;
++    /// What an upload scratch buffer may keep between the checks made every 256 frames
++    static constexpr size_t KeptScratchCapacity = 8U << 20;
+ 
+     /// Splits large 2D image uploads into smaller chunks, avoiding multi-hundred MiB staging buffers.
+     bool UploadInChunks(Image& image);
+--- a/src/video_core/texture_cache/texture_cache.h
++++ b/src/video_core/texture_cache/texture_cache.h
+@@ -467,9 +467,11 @@
+ template <class P>
+ void TextureCache<P>::TickFrame() {
+     // Upload buffers grown for one huge image (title 1's 341 MiB terrain layer pools) are freed
+-    // rather than kept for the rest of the session.
++    // rather than kept for the rest of the session: at once over LargeScratchCapacity, every 256
++    // frames over KeptScratchCapacity (OoT kept a 64 MiB one from its save load on).
+     for (auto* const scratch : {&swizzle_data_buffer, &unswizzle_data_buffer}) {
+-        if (scratch->capacity() > LargeScratchCapacity) {
++        if (scratch->capacity() > LargeScratchCapacity ||
++            (scratch->capacity() > KeptScratchCapacity && (frame_tick & 255) == 0)) {
+             scratch->release();
+         }
+     }
+@@ -3615,6 +3617,10 @@
+                 astc_scan_buffer.resize(scan_bytes);
+                 gpu_memory->ReadBlockUnsafe(gpu_addr, astc_scan_buffer.data(), scan_bytes);
+                 new_info.astc_opaque = AstcDataLooksOpaque(astc_scan_buffer);
++                if (astc_scan_buffer.capacity() > KeptScratchCapacity) {
++                    // OoT kept 56 MiB here after one scan
++                    std::vector<u8>{}.swap(astc_scan_buffer);
++                }
+                 ++(new_info.astc_opaque ? astc_opaque_images : astc_alpha_images);
+             }
+         }

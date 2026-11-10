@@ -1,0 +1,23 @@
+3D engine: state register writes go straight to their store (zortos293/Lichii#1095).
+
+diff --color -ru a/src/video_core/engines/maxwell_3d.cpp b/src/video_core/engines/maxwell_3d.cpp
+--- a/src/video_core/engines/maxwell_3d.cpp
++++ b/src/video_core/engines/maxwell_3d.cpp
+@@ -527,6 +527,17 @@
+ 
+ void Maxwell3D::DispatchMethod(Core::System& system, u32 method, u32 method_argument,
+                                bool is_last_call) {
++    // About half of the split back's 3D writes are state registers: CallMethodFast's store, here
++    // without the calls to it. A register outside execution_mask is not SET_SHADOW_RAM_CONTROL
++    // either (zortos293/Lichii#1095).
++    if (fast_maxwell3d && executing_macro == 0 && method < MacroRegistersStart &&
++        !execution_mask[method] && !perf_verify) [[likely]] {
++        const u32 argument = ProcessShadowRam(method, method_argument);
++        if (!SkipSameValueWrites() || regs.reg_array[method] != argument) {
++            ProcessDirtyRegisters(method, argument);
++        }
++        return;
++    }
+     if (!fast_maxwell3d || executing_macro != 0 || method >= MacroRegistersStart ||
+         method == MAXWELL3D_REG_INDEX(shadow_ram_control)) {
+         return CallMethodSlow(system, method, method_argument, is_last_call);

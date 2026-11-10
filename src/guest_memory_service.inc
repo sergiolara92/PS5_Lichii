@@ -76,6 +76,17 @@ struct Counters {
     std::atomic<std::uint64_t> pack_aliased{0}, pack_changed{0}, unpack_wrong{0};
 };
 Counters counters;
+// The last "EDEN_CRAM declined" line, for the crash report (eden_guest_last_refusal): the line
+// itself goes only to the kernel log, which testers can't send.
+char last_refusal[160];
+std::atomic<std::uint64_t> refusal_count{0};
+void KeepRefusal(const char* line) noexcept {
+    std::strncpy(last_refusal, line, sizeof(last_refusal) - 1);
+    refusal_count.fetch_add(1, std::memory_order_release);
+}
+
+// Freed pages cleared (GuestMemoryFreedPart, below).
+std::atomic<std::uint64_t> freed_part_calls{0}, freed_part_bytes{0};
 void ResetCounters() noexcept {
     for (auto* counter : {&counters.faults, &counters.promotions, &counters.copies, &counters.waits,
                           &counters.returns_clear, &counters.returns_free, &counters.returns_scan, &counters.dedup,
@@ -805,7 +816,10 @@ bool HandleGuestWriteFault(void* fault) noexcept {
         const int length = std::snprintf(line, sizeof(line),
             "EDEN_CRAM declined: address %#lx slot %zu state Own faulted 17 times (physical %#llx)\n",
             static_cast<unsigned long>(address), slot, static_cast<unsigned long long>(range->physical[slot]));
-        if (length > 0) Note(line);
+        if (length > 0) {
+            Note(line);
+            KeepRefusal(line);
+        }
         return false;
     }
     if (waited) {
@@ -846,7 +860,10 @@ bool HandleGuestWriteFault(void* fault) noexcept {
         char line[128];
         const int length = std::snprintf(line, sizeof(line), "EDEN_CRAM declined: address %#lx slot %zu state %u found no block\n",
                                          static_cast<unsigned long>(address), slot, unsigned(state));
-        if (length > 0) Note(line);
+        if (length > 0) {
+            Note(line);
+            KeepRefusal(line);
+        }
         counters.failures.fetch_add(1, std::memory_order_relaxed);
         Note(state == SlotPacked ? "EDEN_CRAM out of memory: a packed slot of the guest's memory found no block to unpack into\n"
                                  : "EDEN_CRAM out of memory: a written slot of the guest's memory found no block\n");
@@ -1142,7 +1159,7 @@ void ServiceReport(SparseRange& range, const char* when) noexcept {
         "returns_clear=%llu returns_free=%llu returns_scan=%llu dedup=%llu reserve_used=%llu failures=%llu "
         "passes=%llu scan_ms=%llu fine=%zu fine_held=%zuMiB fined=%llu unfined=%llu fine_failures=%llu "
         "cold=%zu packed=%zu packed_held=%zuMiB colds=%llu warms=%llu packs=%llu unpacks=%llu pack_refused=%llu retire_full=%llu pack_store=%zuMiB "
-        "sweeps=%llu pack_aliased=%llu pack_changed=%llu unpack_wrong=%llu\n",
+        "sweeps=%llu pack_aliased=%llu pack_changed=%llu unpack_wrong=%llu freed_parts=%llu freed_parts_cleared=%lluMiB\n",
         when, guest_committed.load(std::memory_order_relaxed) >> 20, own, shared, slots - own - shared - fine - shown - cold - packed,
         shown, (unsigned long long)counters.shows.load(), cpu_free, cpu_tables, gpu_free, gpu_tables,
         (unsigned long long)counters.faults.load(), (unsigned long long)counters.promotions.load(),
@@ -1158,7 +1175,8 @@ void ServiceReport(SparseRange& range, const char* when) noexcept {
         (unsigned long long)counters.unpacks.load(), (unsigned long long)counters.pack_refused.load(),
         (unsigned long long)counters.retire_full.load(), pack_store_slabs.load(std::memory_order_relaxed) * SparseSlot >> 20, (unsigned long long)counters.sweeps.load(),
         (unsigned long long)counters.pack_aliased.load(), (unsigned long long)counters.pack_changed.load(),
-        (unsigned long long)counters.unpack_wrong.load());
+        (unsigned long long)counters.unpack_wrong.load(), (unsigned long long)freed_part_calls.load(),
+        (unsigned long long)(freed_part_bytes.load() >> 20));
     if (length > 0) Report(line);
 }
 
@@ -1265,6 +1283,8 @@ void CompactStore(SparseRange& range) noexcept {
 }
 
 constexpr unsigned long long ShortOfFree = 5ULL << 29; // 2.5 GiB
+// The app's heap (headless/heap_arenas.inc); absent in the host checks.
+extern "C" std::size_t eden_heap_trim(std::size_t keep, std::size_t most) __attribute__((weak));
 void ScannerLoop(SparseRange* range) {
     auto next_report = std::chrono::steady_clock::now() + std::chrono::seconds(30);
     std::unique_lock lock{scanner_mutex};
@@ -1285,6 +1305,12 @@ void ScannerLoop(SparseRange* range) {
         if (scanner_stop) break;
         lock.unlock();
         if (scan_requested.load(std::memory_order_relaxed)) ScanPass(*range);
+        // Short: the heap's free room first, all of it. Only the GPU thread trimmed it (256 MiB every 5 s
+        // of frames, none while pipelines compiled), and after a cold-cache boot its pieces held 2.4 GB
+        // over their use while a save load found no block (crash-20261109-182929). Kicked by the
+        // graphics allocator's recovery too (GuestMemoryPackNow).
+        if (eden_heap_trim != nullptr && free_reader != nullptr && free_reader() < ShortOfFree)
+            (void)eden_heap_trim(std::size_t{64} << 20, SIZE_MAX);
         // Still short: the slots nothing touched since the last sweep are packed, and the rest made
         // Cold for the next round (not the ones that refused or were unpacked a moment ago). Entering
         // OOT's Hyrule Field the graphics took 2.6 GiB in seconds with nothing Cold to pack, and the
@@ -1689,10 +1715,19 @@ void FillGuestMemory(std::uint8_t* at, int fill, std::size_t bytes) noexcept {
     std::memset(at, fill, bytes);
 }
 
-// The guest's kernel freed pages: every slot they cover whole goes back.
+// The guest's kernel freed pages (a free block of 2 MiB or more in its page heap): every slot they
+// cover whole goes back. EDEN_GUEST_FREE_RETURN=0 keeps freed slots held until they are reused.
+bool ReturnFreedSlots() noexcept {
+    static const bool on = [] {
+        const char* value = std::getenv("EDEN_GUEST_FREE_RETURN");
+        return value == nullptr || value[0] != '0';
+    }();
+    return on;
+}
+
 void GuestMemoryFreed(std::uint64_t offset, std::size_t bytes) noexcept {
     SparseRange* const range = guest_range.load(std::memory_order_acquire);
-    if (range == nullptr || !range->promote || bytes < SparseSlot) return;
+    if (range == nullptr || !range->promote || bytes < SparseSlot || !ReturnFreedSlots()) return;
     const std::uint64_t first = (offset + SparseSlot - 1) / SparseSlot;
     const std::uint64_t last = (offset + bytes) / SparseSlot; // exclusive
     for (std::uint64_t slot = first; slot < last; ++slot) {
@@ -1704,6 +1739,52 @@ void GuestMemoryFreed(std::uint64_t offset, std::size_t bytes) noexcept {
         UnlockSlot(*range, static_cast<std::size_t>(slot), SlotZero);
     }
 }
+
+// The guest's kernel freed pages that do not make a free block of 2 MiB (a region's tail, a page
+// group's blocks): GuestMemoryFreed never sees them, and their slot stays held whole. MKW unmaps
+// ~1.7 GB in 5 minutes in pieces of ~370 KiB (heydemoura/EglantinePS5 f158e7a: ~640 MiB stayed
+// held). Nothing in the guest reads freed pages (the kernel fills them or hands them out again
+// first), so they are cleared where the slot has a block of its own; the scanner then gives back
+// the slot (all zero) or its zero pages (Fine). EDEN_GUEST_FREE_ZERO=0 leaves them.
+bool ZeroFreedParts() noexcept {
+    static const bool on = [] {
+        const char* value = std::getenv("EDEN_GUEST_FREE_ZERO");
+        return value == nullptr || value[0] != '0';
+    }();
+    return on;
+}
+
+void GuestMemoryFreedPart(std::uint64_t offset, std::size_t bytes) noexcept {
+    SparseRange* const range = guest_range.load(std::memory_order_acquire);
+    if (range == nullptr || !range->promote || bytes == 0 || !ZeroFreedParts()) return;
+    const std::size_t slots = (range->end - range->begin.load(std::memory_order_relaxed)) / SparseSlot;
+    freed_part_calls.fetch_add(1, std::memory_order_relaxed);
+    for (std::uint64_t at = offset, end = offset + bytes; at < end;) {
+        const std::size_t slot = static_cast<std::size_t>(at / SparseSlot);
+        const std::uint64_t slot_end = std::min<std::uint64_t>(end, (at / SparseSlot + 1) * SparseSlot);
+        if (slot >= slots) break;
+        LockSlot(*range, slot);
+        const std::uint8_t state = SlotState(*range, slot);
+        if (state == SlotOwn) {
+            std::memset(reinterpret_cast<void*>(SlotAddress(*range, slot) + at % SparseSlot), 0,
+                        static_cast<std::size_t>(slot_end - at));
+            freed_part_bytes.fetch_add(slot_end - at, std::memory_order_relaxed);
+        }
+        UnlockSlot(*range, slot, state);
+        at = slot_end;
+    }
+}
+
+} // namespace Common
+
+// The crash report's line on guest memory (headless/crash_report.cpp): how many writes found no
+// block, and the last one's line; null before any.
+extern "C" const char* eden_guest_last_refusal(unsigned long long* count) noexcept {
+    *count = Common::refusal_count.load(std::memory_order_acquire);
+    return *count != 0 ? Common::last_refusal : nullptr;
+}
+
+namespace Common {
 
 // For the host checks: one scan pass now, and a slot's state (0 Zero, 1 Own, 2 Shared, 3 Fine, 4 Shown, 5 Packed,
 // 6 Cold, -1 none).

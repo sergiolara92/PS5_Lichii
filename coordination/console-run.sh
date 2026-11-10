@@ -98,7 +98,9 @@ if kill -0 $runner 2>/dev/null; then
     # has gone (a crash restarts it into a loading game, which ignores the shortcut).
     for t in 425 450 475 500 525; do
         at $t && press $((0x100400)) 800
-        at $((t + 12)) && ftp put $APP/quit-app.txt "quit $(date +%s%N)"
+        # The press is read; a session the app starts again must not replay it while loading (it
+        # can't stop within the limit then, and the app restarts again: a loop).
+        at $((t + 12)) && { ftp rm $APP/compat-input.txt 2>/dev/null; ftp put $APP/quit-app.txt "quit $(date +%s%N)"; }
     done
 fi
 wait $runner

@@ -7,7 +7,8 @@ stand-in for the console's mspace functions: a first-fit allocator with checked 
 Eight threads allocate, resize and free blocks of every size, each filled with a pattern that
 is checked when the block changes hands, so an owner looked up wrongly, a block handed out
 twice or a piece used before it has memory shows as a damaged pattern or header (or a fault:
-the range is unreadable until committed). Then the limits: one request larger than a piece, a
+the range is unreadable until committed). Then a burst: 16 threads hold 1.5 GiB of small and medium
+blocks and free them, and a trim while they still live must give it back. Then the limits: one request larger than a piece, a
 large request when the console has no memory for a block of its own, the heap filled to its
 3 GiB, and the same run with the range refused (the old whole-heap path).
 """
@@ -298,6 +299,78 @@ static void *worker(void *argument) {
     return NULL;
 }
 
+// A burst like a boot that compiles every pipeline again: 16 threads (a compile pool, alive after it)
+// hold 1.5 GiB of small and medium blocks at once and free them; a few results outlive it. A trim
+// must then give the burst's pieces back down to near where they were, though the threads live on.
+enum { BURST_THREADS = 16 };
+static pthread_barrier_t burst_freed, burst_checked;
+static void *burst_worker(void *argument) {
+    unsigned state = (unsigned)(uintptr_t)argument * 2654435761u + 7;
+    enum { MOST = 8192 };
+    static _Thread_local void *blocks[MOST];
+    void *results[64];
+    int count = 0, kept = 0;
+    for (size_t total = 0; total < ((size_t)96 << 20) && count < MOST;) {
+        state = state * 1664525u + 1013904223u;
+        const unsigned kind = (state >> 20) % 100;
+        const size_t size = kind < 60 ? 16 + (state >> 4) % 2000
+                          : kind < 95 ? 2048 + (state >> 4) % 240000
+                                      : 262144 + (state >> 4) % 786432;
+        unsigned char *block = __wrap_malloc(size);
+        assert(block != NULL);
+        block[0] = block[size - 1] = (unsigned char)state;
+        blocks[count++] = block;
+        total += size;
+    }
+    // Freed in an order unlike the allocations' (as a compile frees its temporaries).
+    for (int i = count - 1; i > 0; --i) {
+        state = state * 1664525u + 1013904223u;
+        const int j = (int)((state >> 8) % (unsigned)(i + 1));
+        void *t = blocks[i]; blocks[i] = blocks[j]; blocks[j] = t;
+    }
+    for (int i = 0; i < count; ++i) __wrap_free(blocks[i]);
+    // Results (pipeline objects): small, kept until the thread ends.
+    for (; kept < 64; ++kept) {
+        results[kept] = __wrap_malloc(48 + kept);
+        assert(results[kept] != NULL);
+    }
+    pthread_barrier_wait(&burst_freed);   // the pool lives on, idle, while the heap is trimmed
+    pthread_barrier_wait(&burst_checked);
+    for (int i = 0; i < kept; ++i) __wrap_free(results[i]);
+    return NULL;
+}
+static size_t trim_all(void) {
+    // More than once: a trim right after room was taken back gives nothing (the heap needed it).
+    size_t given = 0;
+    for (int i = 0; i < 3; ++i) given += eden_heap_trim(0, (size_t)-1);
+    return given;
+}
+static void burst_case(void) {
+    trim_all();
+    const size_t before = eden_heap_committed();
+    pthread_barrier_init(&burst_freed, NULL, BURST_THREADS + 1);
+    pthread_barrier_init(&burst_checked, NULL, BURST_THREADS + 1);
+    pthread_t threads[BURST_THREADS];
+    for (uintptr_t i = 0; i < BURST_THREADS; ++i) assert(pthread_create(&threads[i], NULL, burst_worker, (void *)(i + 101)) == 0);
+    pthread_barrier_wait(&burst_freed);
+    const size_t grown = eden_heap_committed() + eden_heap_plugged_bytes(NULL, NULL);
+    trim_all();
+    const size_t after = eden_heap_committed();
+    pthread_barrier_wait(&burst_checked);
+    for (int i = 0; i < BURST_THREADS; ++i) pthread_join(threads[i], NULL);
+    trim_all();
+    const size_t exited = eden_heap_committed();
+    printf("burst: %zu MiB held before, pieces grew to %zu MiB, %zu MiB held after a trim with the threads alive, "
+           "%zu MiB after they exited\n", before >> 20, grown >> 20, after >> 20, exited >> 20);
+    fflush(stdout);
+    // New arenas (8 MiB each, kept for the next threads) and the pages the spaces' own records and
+    // the results sit on stay; the rest of the burst goes back.
+    if (!(grown > before + ((size_t)768 << 20) && after < before + ((size_t)256 << 20) && exited <= after)) {
+        fprintf(stderr, "the burst's memory was not given back\n");
+        abort();
+    }
+}
+
 int main(int argc, char **argv) {
     refuse_range = argc > 1 && strcmp(argv[1], "whole") == 0;
     const size_t piece = (size_t)32 << 20, heap = (size_t)5120 << 20; // EDEN_HEAP_PIECE_SHIFT 25
@@ -387,6 +460,7 @@ int main(int argc, char **argv) {
         __wrap_free(outside);
         assert(eden_heap_large_held(&blocks_alive) == 0 && blocks_alive == 0);
     }
+    if (!refuse_range) burst_case();
     // Fill the heap with blocks under the large size: the limit is its 5 GiB, and running out
     // returns NULL without damage.
     enum { MANY = 4096 };
@@ -432,7 +506,7 @@ with tempfile.TemporaryDirectory(prefix='eden-heap-') as work:
             result = subprocess.run([str(binary), *mode], capture_output=True, text=True, timeout=900)
             sys.stdout.write(f'[{label}] ' + result.stdout)
             if result.returncode != 0:
-                sys.stderr.write(result.stderr[-3000:])
+                sys.stderr.write(result.stdout[-2000:] + "\n".join(l for l in result.stderr.splitlines() if not l.startswith("EDEN_HEAP_GROWTH"))[-3000:])
                 sys.exit(f'heap check failed ({label} {" ".join(mode)}): exit {result.returncode}')
-print('Heap by pieces: growth on demand, free room given back and taken again, owners by address, requests larger than a piece, the 5 GiB limit, '
+print('Heap by pieces: growth on demand, free room given back and taken again, a 1.5 GiB burst given back, owners by address, requests larger than a piece, the 5 GiB limit, '
       'the whole-heap fallback and eight threads under the thread sanitizer PASS')

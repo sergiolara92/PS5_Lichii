@@ -1,0 +1,98 @@
+Trim the emulated passthrough geometry shader (zortos293/Lichii#1110): only position and the
+generics pass through, and only the generics the previous stage writes. Donkey Kong Bananza's
+voxel-world pipeline otherwise declared 133 output components (AMD's limit is 128, RADV's too) and
+non-generic inputs, and the driver crashed after the golden-banana loading screen.
+
+--- a/src/shader_recompiler/frontend/maxwell/translate_program.cpp
++++ b/src/shader_recompiler/frontend/maxwell/translate_program.cpp
+@@ -366,6 +366,43 @@
+ }
+ } // Anonymous namespace
+ 
++void TrimGeometryPassthrough(IR::Program& program, const VaryingState& previous_stores) {
++    if (!program.is_geometry_passthrough) {
++        return;
++    }
++    std::bitset<32> dropped;
++    for (u32 j = 0; j < 32; ++j) {
++        if (program.info.passthrough.Generic(j) && !previous_stores.Generic(j)) {
++            dropped.set(j);
++        }
++    }
++    if (dropped.none()) {
++        return;
++    }
++    for (IR::Block* const block : program.blocks) {
++        for (IR::Inst& inst : block->Instructions()) {
++            if (inst.GetOpcode() != IR::Opcode::SetAttribute) {
++                continue;
++            }
++            const IR::Attribute attr{inst.Arg(0).Attribute()};
++            if (!IR::IsGeneric(attr) || !dropped.test(IR::GenericAttributeIndex(attr))) {
++                continue;
++            }
++            inst.Invalidate();
++        }
++    }
++    for (u32 j = 0; j < 32; ++j) {
++        if (!dropped.test(j)) {
++            continue;
++        }
++        const size_t base = static_cast<size_t>(IR::Attribute::Generic0X) + j * 4;
++        for (size_t component = 0; component < 4; ++component) {
++            program.info.passthrough.mask[base + component] = false;
++            program.info.stores.mask[base + component] = false;
++        }
++    }
++}
++
+ IR::Program TranslateProgram(ObjectPool<IR::Inst>& inst_pool, ObjectPool<IR::Block>& block_pool,
+                              Environment& env, Flow::CFG& cfg, const HostTranslateInfo& host_info) {
+     HostTranslateInfo normalized_host_info{host_info};
+@@ -400,7 +437,15 @@
+         if (program.is_geometry_passthrough) {
+             const auto& mask{env.GpPassthroughMask()};
+             for (size_t i = 0; i < mask.size() * 32; ++i) {
+-                program.info.passthrough.mask[i] = ((mask[i / 32] >> (i % 32)) & 1) == 0;
++                // Only position and the generics can pass through: the skip mask covers every
++                // attribute word, and a cleared register (Donkey Kong Bananza leaves it at 0) would
++                // otherwise declare vertex/instance ids, front face, point coords and tess coords
++                // as geometry inputs (invalid SPIR-V that crashes the AMD driver).
++                const auto attribute = static_cast<IR::Attribute>(i);
++                const bool allowed = (attribute >= IR::Attribute::PositionX &&
++                                      attribute <= IR::Attribute::PositionW) ||
++                                     IR::IsGeneric(attribute);
++                program.info.passthrough.mask[i] = allowed && ((mask[i / 32] >> (i % 32)) & 1) == 0;
+             }
+ 
+             if (!normalized_host_info.support_geometry_shader_passthrough) {
+--- a/src/shader_recompiler/frontend/maxwell/translate_program.h
++++ b/src/shader_recompiler/frontend/maxwell/translate_program.h
+@@ -26,6 +26,10 @@
+ 
+ void ConvertLegacyToGeneric(IR::Program& program, const RuntimeInfo& runtime_info);
+ 
++// An emulated passthrough geometry shader copies every generic in its passthrough mask; drop the
++// ones the previous stage never writes so the output stays within the host's component limits.
++void TrimGeometryPassthrough(IR::Program& program, const VaryingState& previous_stores);
++
+ // Maxwell v1 and older Nvidia cards don't support setting gl_Layer from non-geometry stages.
+ // This creates a workaround by setting the layer as a generic output and creating a
+ // passthrough geometry shader that reads the generic and sets the layer.
+--- a/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
++++ b/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
+@@ -6024,6 +6024,14 @@
+         const size_t stage_index{index - 1};
+         infos[stage_index] = &program.info;
+ 
++        if (program.is_geometry_passthrough && previous_stage != nullptr &&
++            !host_info.support_geometry_shader_passthrough) {
++            // Emulated passthrough: only the previous stage's outputs can pass through. Copying all
++            // 32 generics exceeds AMD's 128 output components, and amdvlk fail-fasts instead of
++            // returning an error. The previous stage's legacy outputs are generics by now, so the
++            // ones they were mapped to are kept.
++            Shader::Maxwell::TrimGeometryPassthrough(program, previous_stage->info.stores);
++        }
+         auto runtime_info{MakeRuntimeInfo(programs, key, program, previous_stage, device)};
+         if (mesh_emulation && (program.stage == Shader::Stage::Mesh ||
+                                program.stage == Shader::Stage::Task)) {

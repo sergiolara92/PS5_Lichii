@@ -1,0 +1,184 @@
+Mask the colour components a fragment shader doesn't output (Frizti/Fritchii#40, port of
+zortos293/Lichii#353): Vulkan leaves them undefined and AMD writes whatever its export registers
+hold (OoT: magenta/cyan outlines on distant silhouettes, rainbow fringe on the Hyrule Field
+horizon). The kept-file magic goes to NX2KEPT3, so kept files are prepared once again.
+
+--- a/src/shader_recompiler/info_serialize.cpp
++++ b/src/shader_recompiler/info_serialize.cpp
+@@ -12,11 +12,11 @@
+ 
+ // Every field of Info is listed in VisitInfo below. An info that grows a field has to be listed
+ // there too: this size check fails the build until it is (update the size with it).
+-// Ported from zortos293/Lichii#896 for Fritchii: our Info has no frag_color_components (their
+-// #8xx), so it is 8 bytes smaller and that field is not visited. A new field here also needs
+-// PrecompiledKeptMagic (vk_pipeline_cache.cpp) bumped, so kept files written before are rebuilt.
++// Ported from zortos293/Lichii#896 for Fritchii; frag_color_components came with Lichii#353. A
++// new field here also needs PrecompiledKeptMagic (vk_pipeline_cache.cpp) bumped, so kept files
++// written before are rebuilt.
+ #if defined(_MSC_VER) && defined(_WIN64)
+-static_assert(sizeof(Info) == 6928,
++static_assert(sizeof(Info) == 6936,
+               "Shader::Info changed: list the new fields in VisitInfo, then update this size");
+ // The descriptors are held in vectors, so a field they grow does not change sizeof(Info).
+ static_assert(sizeof(ConstantBufferDescriptor) == 8 && sizeof(StorageBufferDescriptor) == 80 &&
+@@ -297,6 +297,7 @@
+     io(info.legacy_stores_mapping);
+     io(info.loads_indexed_attributes);
+     io(info.stores_frag_color);
++    io(info.frag_color_components);
+     io(info.stores_sample_mask);
+     io(info.stores_frag_depth);
+     io(info.stores_tess_level_outer);
+--- a/src/shader_recompiler/ir_opt/collect_shader_info_pass.cpp
++++ b/src/shader_recompiler/ir_opt/collect_shader_info_pass.cpp
+@@ -483,9 +483,13 @@
+     case IR::Opcode::SetAttributeIndexed:
+         info.stores_indexed_attributes = true;
+         break;
+-    case IR::Opcode::SetFragColor:
+-        info.stores_frag_color[inst.Arg(0).U32()] = true;
++    case IR::Opcode::SetFragColor: {
++        const u32 render_target{inst.Arg(0).U32()};
++        info.stores_frag_color[render_target] = true;
++        info.frag_color_components[render_target] |=
++            static_cast<u8>(1U << inst.Arg(1).U32());
+         break;
++    }
+     case IR::Opcode::SetSampleMask:
+         info.stores_sample_mask = true;
+         break;
+--- a/src/shader_recompiler/shader_info.h
++++ b/src/shader_recompiler/shader_info.h
+@@ -309,6 +309,8 @@
+     bool loads_indexed_attributes{};
+ 
+     std::array<bool, 8> stores_frag_color{};
++    /// Components (bit 0 = R ... bit 3 = A) of each render target the fragment shader writes
++    std::array<u8, 8> frag_color_components{};
+     bool stores_sample_mask{};
+     bool stores_frag_depth{};
+ 
+--- a/src/video_core/renderer_vulkan/vk_graphics_pipeline.cpp
++++ b/src/video_core/renderer_vulkan/vk_graphics_pipeline.cpp
+@@ -522,6 +522,12 @@
+         num_descriptor_entries += NumDescriptorEntries(*info);
+     }
+     fragment_has_color0_output = stage_infos[NUM_STAGES - 1].stores_frag_color[0];
++    // The guest leaves render target components the fragment shader doesn't output untouched,
++    // while Vulkan writes undefined values to them (AMD writes garbage), so they are masked out.
++    for (size_t rt = 0; rt < Maxwell::NumRenderTargets; ++rt) {
++        color_output_mask |= u32{stage_infos[NUM_STAGES - 1].frag_color_components[rt]}
++                             << (rt * 4);
++    }
+     const auto any_written = [](const auto& descriptors) {
+         return std::ranges::any_of(descriptors, [](const auto& desc) { return desc.is_written; });
+     };
+@@ -2100,6 +2106,7 @@
+         for (size_t i = 0; i < mask_table.size(); ++i) {
+             write_mask |= mask[i] ? mask_table[i] : 0;
+         }
++        write_mask &= ColorOutputMask(index);
+         cb_attachments.push_back({
+             .blendEnable = blend.enable != 0,
+             .srcColorBlendFactor = MaxwellToVK::BlendFactor(blend.SourceRGBFactor()),
+--- a/src/video_core/renderer_vulkan/vk_graphics_pipeline.h
++++ b/src/video_core/renderer_vulkan/vk_graphics_pipeline.h
+@@ -167,6 +167,16 @@
+         return fragment_has_color0_output;
+     }
+ 
++    /// Color components of a render target the fragment shader writes, as VkColorComponentFlags
++    VkColorComponentFlags ColorOutputMask(size_t render_target) const noexcept {
++        return (color_output_mask >> (render_target * 4)) & 0xF;
++    }
++
++    /// Color components the fragment shader writes, 4 bits per render target
++    u32 ColorOutputMask() const noexcept {
++        return color_output_mask;
++    }
++
+     /// Texture handles of the last configured draw whose handle program gave 0.
+     u32 ZeroTextureHandles() const noexcept {
+         return zero_texture_handles;
+@@ -400,6 +410,7 @@
+     std::vector<SampledImage> sampled_images;
+     u32 num_textures{};
+     bool fragment_has_color0_output{};
++    u32 color_output_mask{};
+     u32 zero_texture_handles{};
+     bool writes_storage{};
+     TextureMemo texture_memo;
+--- a/src/video_core/renderer_vulkan/vk_precompiled_kept.cpp
++++ b/src/video_core/renderer_vulkan/vk_precompiled_kept.cpp
+@@ -27,8 +27,8 @@
+ 
+ // A new layout, or a Shader::Info field the serializer learns (info_serialize.cpp), needs a new
+ // magic: kept files written before are then prepared again. 2: the precompiled record offsets
+-// (the boot check reads each sampled record's key from them).
+-constexpr std::string_view Magic{"NX2KEPT2"};
++// (the boot check reads each sampled record's key from them). 3: Info::frag_color_components.
++constexpr std::string_view Magic{"NX2KEPT3"};
+ constexpr std::string_view EndMagic{"NX2KEPTE"};
+ constexpr u8 EntryInfo = 1;
+ constexpr u8 EntrySpirv = 2;
+--- a/src/video_core/renderer_vulkan/vk_rasterizer.cpp
++++ b/src/video_core/renderer_vulkan/vk_rasterizer.cpp
+@@ -3750,7 +3750,7 @@
+     }
+ 
+     if (device.IsExtExtendedDynamicState3BlendingSupported()) {
+-        UpdateBlending(regs);
++        UpdateBlending(regs, draw_pipeline);
+     } else if (device.IsExtColorWriteEnableSupported()) {
+         UpdateColorWriteEnable(regs);
+     }
+@@ -4393,12 +4393,18 @@
+     scheduler.Record([op](vk::CommandBuffer cmdbuf) { cmdbuf.SetLogicOpEXT(op); });
+ }
+ 
+-void RasterizerVulkan::UpdateBlending(Tegra::Engines::Maxwell3D::Regs& regs) {
+-    if (!state_tracker.TouchBlending()) {
++void RasterizerVulkan::UpdateBlending(Tegra::Engines::Maxwell3D::Regs& regs,
++                                      const GraphicsPipeline* pipeline) {
++    // The write mask also excludes components the fragment shader doesn't output, so it has to be
++    // recorded again whenever the bound pipeline outputs a different set of components.
++    const u32 color_output_mask = pipeline ? pipeline->ColorOutputMask() : ~0U;
++    const bool color_output_changed = color_output_mask != last_color_output_mask;
++    if (!state_tracker.TouchBlending() && !color_output_changed) {
+         return;
+     }
+ 
+-    if (state_tracker.TouchColorMask()) {
++    if (state_tracker.TouchColorMask() || color_output_changed) {
++        last_color_output_mask = color_output_mask;
+         std::array<VkColorComponentFlags, Maxwell::NumRenderTargets> setup_masks{};
+         for (size_t index = 0; index < Maxwell::NumRenderTargets; index++) {
+             const auto& mask = regs.color_mask[regs.color_mask_common ? 0 : index];
+@@ -4415,6 +4421,7 @@
+             if (mask.A) {
+                 current |= VK_COLOR_COMPONENT_A_BIT;
+             }
++            current &= (color_output_mask >> (index * 4)) & 0xF;
+         }
+         scheduler.Record([setup_masks](vk::CommandBuffer cmdbuf) {
+             cmdbuf.SetColorWriteMaskEXT(0, setup_masks);
+--- a/src/video_core/renderer_vulkan/vk_rasterizer.h
++++ b/src/video_core/renderer_vulkan/vk_rasterizer.h
+@@ -249,7 +249,7 @@
+     void UpdateStencilOp(Tegra::Engines::Maxwell3D::Regs& regs);
+     void UpdateStencilTestEnable(Tegra::Engines::Maxwell3D::Regs& regs);
+     void UpdateLogicOp(Tegra::Engines::Maxwell3D::Regs& regs);
+-    void UpdateBlending(Tegra::Engines::Maxwell3D::Regs& regs);
++    void UpdateBlending(Tegra::Engines::Maxwell3D::Regs& regs, const GraphicsPipeline* pipeline);
+     void UpdateColorWriteEnable(Tegra::Engines::Maxwell3D::Regs& regs);
+ 
+     void UpdateVertexInput(Tegra::Engines::Maxwell3D::Regs& regs);
+@@ -334,6 +334,8 @@
+     u32 render_trace_clears = 0;
+     bool pending_native_work{};
+     bool mesh_draw{}; ///< the draw being prepared uses a task/mesh pipeline
++    /// Fragment output components the dynamic color write mask was last recorded with
++    u32 last_color_output_mask{};
+     VideoCommon::OotNetwork::BypassState oot_network_bypass;
+     u32 mesh_emulation_groups{};             ///< mesh workgroups of the emulated draw
+     u32 mesh_emulation_vertices_per_group{}; ///< 0 unless the draw is an emulated mesh draw
