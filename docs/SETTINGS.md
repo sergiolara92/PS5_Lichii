@@ -8,7 +8,7 @@ The settings that take more than a line to explain: the Performance switches and
 
 | Setting | In the file | Default | What it does |
 |---|---|---|---|
-| Compile ahead | `block_list` | off | The code a 64-bit game compiled in earlier sessions is compiled again on a spare CPU as it starts, so the game stutters less when it reaches that code. In the one large game it was measured in, the game loaded sooner and its first seconds of play held their frame rate, while the emulated processor worked about a tenth harder afterwards. It has run in one game on the console so far; switch it off if a game misbehaves. |
+| Compile ahead | `block_list` | on | The code a 64-bit game compiled in earlier sessions is compiled again on a spare CPU as it starts, so the game stutters less when it reaches that code. In the one large game it was measured in, the game loaded sooner and its first seconds of play held their frame rate, while the emulated processor worked about a tenth harder afterwards. It has run in one game on the console so far; switch it off if a game misbehaves. |
 | Asynchronous shaders | `async_shaders` | off | A new effect is drawn once its shader is ready instead of pausing the game for it. Things can be missing for a moment. With the Vulkan renderer only: the OpenGL renderer ignores it. |
 | Faster GPU emulation | `fast_gpu` | off | The emulator's lowest GPU accuracy. Faster in demanding games; graphics can be wrong. |
 | Faster CPU emulation | `unsafe_cpu` | off | Less exact floating-point math. A few games misbehave. |
@@ -104,12 +104,12 @@ Six presets come with the app:
 | Retro | An old television: colour fringing at the edges, curved scanlines with a phosphor mask, darker corners |
 | Vivid | Warmer, more saturated colour, deeper blacks and brighter whites, a light sharpen |
 
-The presets are files in `/data/prosperoeden/user/post_presets` (`.fxp`; the app writes the six there the first time), built from the effects in `/data/prosperoeden/user/post_shaders` (`.fx`).
+The presets are files in `/data/lichii/user/post_presets` (`.fxp`; the app writes the six there the first time), built from the effects in `/data/lichii/user/post_shaders` (`.fx`).
 
 | Folder | What goes in it |
 |---|---|
-| `/data/prosperoeden/user/post_presets/` | Presets (`.fxp`): a name, a description and the chain of effects |
-| `/data/prosperoeden/user/post_shaders/` | ReShade FX effects (`.fx`) and the files they include (`.fxh`) |
+| `/data/lichii/user/post_presets/` | Presets (`.fxp`): a name, a description and the chain of effects |
+| `/data/lichii/user/post_shaders/` | ReShade FX effects (`.fx`) and the files they include (`.fxh`) |
 | `roms/<game>/reshade/` | One game's own presets and effects, in its game folder (see [Game files folder](INSTALL.md#game-files-folder)) |
 
 A game's own `reshade/` folder works like both folders at once: its presets (`.fxp`) are offered in that game's settings only, listed first, and the effects it holds (`.fx`, `.fxh`, and textures in `Textures/`) are used for that game, before an effect of the same name in `post_shaders/`. So a game folder can carry a preset made for it together with the effects it needs.
@@ -129,7 +129,7 @@ Frame generation shows, between two pictures a game draws, one that is made up f
 Lossless Scaling's frame generation ([Lossless Scaling](https://store.steampowered.com/app/993090/Lossless_Scaling/)) cannot be included with ProsperoEden: for it you need your own copy of that program.
 
 1. On the PC where Lossless Scaling is installed, find `Lossless.dll` in its folder (with Steam: `steamapps/common/Lossless Scaling`).
-2. Copy it to the console as `/data/prosperoeden/user/lossless/Lossless.dll`.
+2. Copy it to the console as `/data/lichii/user/lossless/Lossless.dll`.
 3. Set **Frame generation** to on in **Settings > Video**, or for one game: Triangle on the game in the Library, then **Video**. It applies the next time the game starts.
 
 Without the file, the three settings are greyed out and say **Unavailable**.
@@ -188,7 +188,7 @@ The D-pad, the sticks and the [in-game shortcuts](../README.md#in-game-shortcuts
 
 ## Language and accessibility
 
-The launcher follows the language the PS5 is set to: Arabic, Chinese (simplified and traditional), Czech, Danish, Dutch, Finnish, French, German, Greek, Hungarian, Indonesian, Italian, Japanese, Korean, Norwegian, Polish, Portuguese, Romanian, Russian, Spanish, Swedish, Thai, Turkish, Ukrainian and Vietnamese (with the regional variants the PS5 has for French, Portuguese and Spanish), and English otherwise. Arabic, Chinese, Greek, Japanese, Korean and Thai are drawn with the PS5's own system fonts. Arabic text runs right to left; the screens themselves are not mirrored. To use another one, put a file named `language.txt` holding its tag (for example `en-US` or `pt-BR`) in `/data/homebrew/PPSA99008`. The language *games* use is a separate setting, **Settings > Language**.
+The launcher follows the language the PS5 is set to: Arabic, Chinese (simplified and traditional), Czech, Danish, Dutch, Finnish, French, German, Greek, Hungarian, Indonesian, Italian, Japanese, Korean, Norwegian, Polish, Portuguese, Romanian, Russian, Spanish, Swedish, Thai, Turkish, Ukrainian and Vietnamese (with the regional variants the PS5 has for French, Portuguese and Spanish), and English otherwise. Arabic, Chinese, Greek, Japanese, Korean and Thai are drawn with the PS5's own system fonts. Arabic text runs right to left; the screens themselves are not mirrored. To use another one, put a file named `language.txt` holding its tag (for example `en-US` or `pt-BR`) in `/data/homebrew/PPSA99009`. The language *games* use is a separate setting, **Settings > Language**.
 
 **Settings > Accessibility** has three switches. **Larger text** draws the menu's small text about a third larger. **High contrast** uses solid panels, brighter text and an outlined highlight. **Reduce motion** stops the background drifting and the screens sliding, in the menu and on the loading screen. There is no screen reader.
 

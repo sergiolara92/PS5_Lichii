@@ -5,12 +5,12 @@
 set -u
 C=/home/mihawk/Desktop/PS5_Homebrews/PS5_Lichii/coordination
 T=${1:?tag}; P=$(realpath ${2:?checkout}); START=${3:-230}; SECS=${4:-10}; shift 4 || shift $#
-cd $C && ./console-run.sh $T $P gpu_accuracy=low cram_fine=on cram_dedup=on env=EDEN_NX2_SCHED_TRACE=$START:$SECS:/data/prosperoeden/logs/sched-trace.bin "$@" > runs/$T.out 2>&1
+cd $C && ./console-run.sh $T $P gpu_accuracy=low cram_fine=on cram_dedup=on env=EDEN_NX2_SCHED_TRACE=$START:$SECS:/data/lichii/logs/sched-trace.bin "$@" > runs/$T.out 2>&1
 timeout 300 python3 -I - $C/runs/$T/sched-trace.bin <<'PY'
 import ftplib, sys
 f = ftplib.FTP(); f.connect(__import__("os").environ["PS5_HOST"], 2121, timeout=30); f.login(); f.voidcmd("TYPE I")
-with open(sys.argv[1], "wb") as o: f.retrbinary("RETR /data/prosperoeden/logs/sched-trace.bin", o.write)
-try: f.delete("/data/prosperoeden/logs/sched-trace.bin")
+with open(sys.argv[1], "wb") as o: f.retrbinary("RETR /data/lichii/logs/sched-trace.bin", o.write)
+try: f.delete("/data/lichii/logs/sched-trace.bin")
 except ftplib.all_errors: pass
 f.quit()
 PY

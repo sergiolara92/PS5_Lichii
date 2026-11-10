@@ -61,7 +61,7 @@ it: merge eglantine-base first. console-run.sh's timeline is 100 s shorter to ma
 - Write findings worth sharing in `notes/<your-worktree>.md` here (short, dated).
 
 ## Tools (this folder)
-- `console-run.sh <tag> <checkout> [dev settings...]`: install `build/dev/PPSA99008` of the
+- `console-run.sh <tag> <checkout> [dev settings...]`: install `build/dev/PPSA99009` of the
   checkout (build it with `make ns2-dev` first; the first build of a worktree takes long) and
   run Mario Kart World for ~9 minutes (title, menus, a race). Logs in `runs/<tag>/`.
 - `fetch-crash.sh runs/<tag>`: the newest crash report and its logs from the console.

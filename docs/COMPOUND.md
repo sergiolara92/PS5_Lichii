@@ -48,7 +48,7 @@ The public Payload SDK and patched PS5 graphics stack remain required for the
 complete PS5 application; a successful desktop CPU test does not validate the PS5
 frontend or a console run. See [Building ProsperoEden](BUILDING.md).
 
-This checkout preserves the inherited `PPSA99008` package identity because the
+This checkout preserves the inherited `PPSA99009` package identity because the
 bundled upstream filesystem helper and validation receipts are exact-title
 inputs. It shares ProsperoEden's application and data locations. Do not install it
 alongside an existing ProsperoEden under that same identity. A distinct title

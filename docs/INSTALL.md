@@ -7,7 +7,7 @@ Where ProsperoEden looks for your keys, firmware and games, where it keeps its o
 Only these subfolders matter; the folder itself can have any name and location.
 
 ```text
-<game files folder>/                    # e.g. /data/prosperoeden, /mnt/ext1/eden, /mnt/usb0/eden
+<game files folder>/                    # e.g. /data/lichii, /mnt/ext1/eden, /mnt/usb0/eden
 ├── keys/
 │   ├── prod.keys
 │   └── title.keys                      # optional
@@ -40,10 +40,10 @@ The folder browser shows how many keys, firmware files, and games each folder ho
 
 ## App data
 
-ProsperoEden keeps its own data in `/data/prosperoeden`, separately from the game files folder:
+ProsperoEden keeps its own data in `/data/lichii`, separately from the game files folder:
 
 ```text
-/data/prosperoeden/
+/data/lichii/
 ├── config/prosperoeden.json            # every profile's settings, and the game files folder
 ├── config/remote/                      # download sources and save sync, when you use them:
 │   ├── sources.json                    #   the sources and how to reach them (written by you)
@@ -55,22 +55,24 @@ ProsperoEden keeps its own data in `/data/prosperoeden`, separately from the gam
 ├── backup/save-sync/                   # save data the save sync replaced, the last three per game
 ├── covers/                             # cached game covers
 ├── logs/                               # current and previous session logs, crash reports
-├── previous-version/PPSA99008-backup/  # the version the last self-update replaced
+├── previous-version/PPSA99009-backup/  # the version the last self-update replaced
 └── user/                               # every profile's saves, and emulator user data
     └── lossless/Lossless.dll           # optional: your copy, for frame generation
 ```
 
-The app itself stays in `/data/homebrew/PPSA99008`; see [Updating](#updating).
+The app itself stays in `/data/homebrew/PPSA99009`; see [Updating](#updating).
+
+If you are upgrading from a build that used `/data/prosperoeden`, close the app and rename that folder to `/data/lichii` before starting this build. This keeps your settings, saves and other app data.
 
 ProsperoEden does not include keys, firmware, games, or other copyrighted console data. Dump these files from hardware and software you own. Do not download or redistribute them.
 
 This is the only place it keeps them. If ProsperoEden cannot get access to the console's storage when it starts, the home screen says so and no game can be started; your data is untouched, and closing ProsperoEden and opening it again is the first thing to try. Earlier versions kept a second set of settings and saves in the app's own sandbox in that case, which made saves and settings seem to disappear on consoles where access came and went.
 
-Keys, firmware and games that an early version kept inside the app's folder (`/data/homebrew/PPSA99008/assets`) are moved to `/data/prosperoeden` the first time this version starts, so that replacing the app cannot remove them.
+Keys, firmware and games that an early version kept inside the app's folder (`/data/homebrew/PPSA99009/assets`) are moved to `/data/lichii` the first time this version starts, so that replacing the app cannot remove them.
 
 ## Updating
 
-Close ProsperoEden first. Your settings, saves, covers and logs are in `/data/prosperoeden`, outside the app, so an update keeps them. Afterwards the About screen shows the version that is running.
+Close ProsperoEden first. Your settings, saves, covers and logs are in `/data/lichii`, outside the app, so an update keeps them. Afterwards the About screen shows the version that is running.
 
 Once each time it opens, ProsperoEden asks [homebrew.page](https://homebrew.page/ps5) which release of it is listed there. The request carries the app's title ID and nothing else. If the listed release is newer than the one running, a dialog offers it, with its version and download size:
 
@@ -82,18 +84,18 @@ To stay on a version without being asked at every start, turn off **Settings > D
 
 If the download or the unpacking fails, the dialog says why and offers **Try again**; the app stays as it was. Without a network, or without an answer, nothing is shown. When ProsperoEden cannot install the release itself (no payload loader, or an install it cannot find), the menu says **Update available** at the top right for ten seconds instead, and the steps below still work:
 
-- **Folder install.** Copy the `PPSA99008` folder from the new release ZIP over `/data/homebrew/PPSA99008`, replacing the files it has, then start ProsperoEden. Files you put there yourself, such as `language.txt`, stay.
+- **Folder install.** Copy the `PPSA99009` folder from the new release ZIP over `/data/homebrew/PPSA99009`, replacing the files it has, then start ProsperoEden. Files you put there yourself, such as `language.txt`, stay.
 
 ## Going back to the previous version
 
-When ProsperoEden updates itself, the files of the version it replaces are kept in `/data/prosperoeden/previous-version/PPSA99008-backup`, until the next update replaces them in turn. If a new version misbehaves, you can put the previous one back:
+When ProsperoEden updates itself, the files of the version it replaces are kept in `/data/lichii/previous-version/PPSA99009-backup`, until the next update replaces them in turn. If a new version misbehaves, you can put the previous one back:
 
 1. Close ProsperoEden.
-2. Copy everything inside `/data/prosperoeden/previous-version/PPSA99008-backup` over the app's folder (`/data/homebrew/PPSA99008`), replacing the files it has, for example over FTP.
+2. Copy everything inside `/data/lichii/previous-version/PPSA99009-backup` over the app's folder (`/data/homebrew/PPSA99009`), replacing the files it has, for example over FTP.
 3. Start ProsperoEden. The About screen shows the version that is running.
 
 The update will be offered again the next time ProsperoEden opens; choose **Skip** to stay on the version you put back. Settings, saves and game files are not part of this: they stay as they are. An update done by hand, by copying a release over the app's folder, keeps no previous version.
 
 ## Upgrading from an earlier alpha
 
-Earlier versions read everything from `/data/homebrew/PPSA99008/assets/`. That folder keeps working until you choose a game files folder, and settings are migrated automatically on first launch. To move to the new layout, move `assets/keys`, `assets/firmware` and `assets/roms` into any folder, then select it in **Settings > Game files**. The release ZIP contains no user files, so copy its app files over your installation without deleting your own data.
+Earlier versions read everything from `/data/homebrew/PPSA99009/assets/`. That folder keeps working until you choose a game files folder, and settings are migrated automatically on first launch. To move to the new layout, move `assets/keys`, `assets/firmware` and `assets/roms` into any folder, then select it in **Settings > Game files**. The release ZIP contains no user files, so copy its app files over your installation without deleting your own data.

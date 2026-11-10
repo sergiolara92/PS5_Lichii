@@ -41,8 +41,13 @@ dispatch_trace = ('                const auto count = ++dispatches;\n'
                   f'                if ({trace_when}) LOG_INFO(Render_OpenGL, "EDEN_GPU_DISPATCH_BEGIN count={{}}", count);\n'
                   + dispatch_call + '\n'
                   f'                if ({trace_when}) LOG_INFO(Render_OpenGL, "EDEN_GPU_DISPATCH_END count={{}}", count);')
-assert worker.count(dispatch_trace) == 1
-untraced = worker.replace(dispatch_trace, dispatch_call).replace('        unsigned dispatches = 0;\n', '')
+if dispatch_trace in worker:
+    assert worker.count(dispatch_trace) == 1
+    untraced = worker.replace(dispatch_trace, dispatch_call).replace('        unsigned dispatches = 0;\n', '')
+else:
+    assert worker.count('        unsigned dispatches = 0;\n') == 1
+    assert 'Profile::Scope scope{Profile::Zone::Push};' in worker
+    untraced = worker.replace('        unsigned dispatches = 0;\n', '')
 loading_wait = """            if (Eden::LoadingTick(renderer, false)) {
                 if (!state.queue.TryPop(next)) {
                     Eden::LoadingTick(renderer, true);
@@ -61,9 +66,10 @@ assert 'ThreadManager::~ThreadManager() { Stop(); }' in worker
 gpu = (cache / 'native-local/headless/gpu.cpp').read_text()
 assert 'GPU::~GPU() { impl->NotifyShutdown(); }' in gpu
 shutdown = gpu.split('    void NotifyShutdown() {', 1)[1].split('    /// Obtain', 1)[0]
-assert 'sync_cv.notify_all();\n        }\n        gpu_thread.Stop();' in shutdown
-assert shutdown.index('gpu_thread.Stop();') < shutdown.index('sync_requests.clear();') < shutdown.index('sync_requests_stopped = true;')
-assert '~Impl() { gpu_thread.Stop(); if (renderer && Settings::IsOpenGL()) { renderer->Context().MakeCurrent(); glFinish(); } }' in gpu
+assert shutdown.index('gpu_thread.NotifyShutdown();') < shutdown.index('sync_requests.clear();') < shutdown.index('sync_cv.notify_all();')
+assert 'sync_requests_dropped = true;' in shutdown
+gpu_teardown = gpu.split('    ~Impl() {', 1)[1].split('\n    }', 1)[0]
+assert gpu_teardown.index('NotifyShutdown();') < gpu_teardown.index('renderer.reset();')
 core = (cache / 'native-local/headless/core.cpp').read_text()
 shutdown_core = core.split('    void ShutdownMainProcess() {', 1)[1].split('    bool IsShuttingDown()', 1)[0]
 assert shutdown_core.index('gpu_core->NotifyShutdown()') < shutdown_core.index('services.reset()') < shutdown_core.index('gpu_core.reset()')

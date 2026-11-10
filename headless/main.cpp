@@ -263,7 +263,7 @@ public:
 
 #ifdef PS5_NATIVE
 // First start with filesystem access: copy what the sandbox kept (settings, covers, Eden's saves
-// and caches) into /data/prosperoeden. Only folders that do not exist yet are filled, and the
+// and caches) into /data/lichii. Only folders that do not exist yet are filled, and the
 // sandbox copy stays, so an older ProsperoEden still finds its data.
 // dev-settings jit_table_check=on: the JIT's direct page table (headless/jit-page-table.cmake) must
 // hold, for every page, the pointer of Eden's entry, or 0 where the entry is marked or empty. A
@@ -294,7 +294,7 @@ public:
 }
 
 static void MigrateSandboxData() {
-    const std::filesystem::path sandbox{"/mnt/sandbox/PPSA99008_000/download0"};
+    const std::filesystem::path sandbox{"/mnt/sandbox/PPSA99009_000/download0"};
     const std::pair<std::filesystem::path, std::string> moves[] = {
         {sandbox / "eden-headless-g7/user", Eden::UserDir()},
         {sandbox / "prosperoeden/covers", Eden::CoversDir()},
@@ -347,10 +347,10 @@ static void ClearStaleDriverCaches() {
 
 #ifdef PS5_NATIVE
 // Game files an early version kept inside the app's folder (assets/ with keys, firmware and
-// roms) move to /data/prosperoeden, where replacing the app cannot take them away: an update
+// roms) move to /data/lichii, where replacing the app cannot take them away: an update
 // that replaces the whole folder left the app without its keys and games. Both are on /data, so
 // it is a rename of each folder. Nothing moves unless all of it can: a folder chosen in Settings,
-// or anything already in /data/prosperoeden, leaves everything where it is.
+// or anything already in /data/lichii, leaves everything where it is.
 static void MoveGameFilesOutOfTheApp() {
     const std::string from = std::string{Eden::kInstallDir} + "/assets", to = Eden::kDefaultAssetsDir;
     const std::string saved = Eden::LoadSavedAssetsDir();
@@ -512,7 +512,7 @@ int main(int argc, char** argv) {
         Eden::Crash::Install(Eden::LogsDir(), Eden::kAppVersion, last_crash.restarted);
         Eden::BootTrace::Ready(Eden::LogsDir(), Eden::FilesystemAccess());
         Eden::BootTrace::Line("logs and crash handler ready (%s)", Eden::LogsDir().c_str());
-        for (const char* folder : {"/app0", Eden::kMountedAppDir, Eden::kInstallDir, "/mnt/sandbox/PPSA99008_000/app0"})
+        for (const char* folder : {"/app0", Eden::kMountedAppDir, Eden::kInstallDir, "/mnt/sandbox/PPSA99009_000/app0"})
             Eden::BootTrace::Line("app folder candidate %s: eboot %s, font %s", folder,
                                   Eden::FileExists(std::string{folder} + "/eboot.bin") ? "yes" : "no",
                                   Eden::FileExists(std::string{folder} + "/ui/fonts/montserrat-medium.pefont") ? "yes" : "no");
@@ -1051,7 +1051,7 @@ int main(int argc, char** argv) {
 #ifndef PS5_NATIVE
         Common::Log::Initialize();
 #endif
-        // Diagnostics: /data/prosperoeden/debug-env.txt holds KEY=VALUE lines (EDEN_LOG_FILTER,
+        // Diagnostics: /data/lichii/debug-env.txt holds KEY=VALUE lines (EDEN_LOG_FILTER,
         // EDEN_HOST_SVC_TRACE, ...) applied as environment variables for the next session.
         {
             std::ifstream debug_env(std::string{Eden::kDataDir} + "/debug-env.txt");
@@ -1236,7 +1236,7 @@ int main(int argc, char** argv) {
                     setenv("EDEN_NX2_SPLIT", "0", 1);  // gpu_split.cpp reads it once, at the first start
                 } else if (entry.starts_with("gpu_replay=")) {
                     // A GPU capture to replay instead of the game (gpu_replay.cpp), e.g.
-                    // gpu_replay=/data/prosperoeden/captures/race.bin
+                    // gpu_replay=/data/lichii/captures/race.bin
                     setenv("EDEN_HOST_GPU_REPLAY", entry.c_str() + 11, 1);
                 } else if (entry == "gpu_split=back_macros") {
                     // The split with the engines' macros on the back (gpu_split.cpp, EDEN_NX2_SPLIT=1).
@@ -1768,8 +1768,7 @@ int main(int argc, char** argv) {
             const int speed_percent = Eden::kSpeedLimitPercent[speed.speed_limit];
             Settings::values.use_speed_limit.SetValue(speed_percent > 0);
             Settings::values.speed_limit.SetValue(static_cast<u16>(speed_percent > 0 ? speed_percent : 100));
-            // The block list is off unless the settings turn it on (block-list.txt in the app
-            // folder still does, further down).
+            // The block list follows its setting (on by default; block-list.txt also enables it).
             if (!dev_block_list) Eden::JitList::enabled = speed.block_list;
             // Set for every session: the value outlives one.
             Settings::values.vertex_input_dynamic_state.SetValue(dev_vertex_input != 0);

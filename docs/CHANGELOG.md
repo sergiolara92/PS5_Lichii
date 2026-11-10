@@ -11,7 +11,7 @@ Fritchii v5.5, our PS5 renderer work back in place, and Switch 2 games started f
 | Fritchii v5.5 alone | 35.4 fps | 37.7 fps | 22.8 fps | 9.7 fps | 1,157 ms |
 | **v1.10.00** | **34.7 fps** | **36.4 fps** | **24.5 fps** | **15.3 fps** | **290 ms** |
 
-> **Pre-release.** It installs as ProsperoEden (`PPSA99008`) and replaces a ProsperoEden already installed; settings, saves and game files under `/data/prosperoeden` are shared.
+> **Pre-release.** It installs as ProsperoEden (`PPSA99009`) and replaces a ProsperoEden already installed; settings, saves and game files under `/data/lichii` are shared.
 
 > **No piracy.** No games, keys or firmware are included, and they never will be. Use only games, keys and firmware you dumped yourself from hardware you own.
 
@@ -39,7 +39,7 @@ The first pre-release of PS5_Lichii: Switch 2 games on the PS5 Pro, on [Fritchii
 | Whole gameplay stretch | 29.4 fps | 28.2 fps | 18.9 fps | 11.5 fps | 624 ms |
 | Last minute | 32.7 fps | 33.9 fps | 22.8 fps | 18.8 fps | 58 ms |
 
-> **Pre-release.** Expect hitches (250–590 ms at area changes) and games that do not start. It installs as ProsperoEden (`PPSA99008`) and replaces a ProsperoEden already installed; settings, saves and game files under `/data/prosperoeden` are shared.
+> **Pre-release.** Expect hitches (250–590 ms at area changes) and games that do not start. It installs as ProsperoEden (`PPSA99009`) and replaces a ProsperoEden already installed; settings, saves and game files under `/data/lichii` are shared.
 
 > **No piracy.** No games, keys or firmware are included, and they never will be. Use only games, keys and firmware you dumped yourself from hardware you own.
 
@@ -50,7 +50,7 @@ The first pre-release of PS5_Lichii: Switch 2 games on the PS5 Pro, on [Fritchii
 - **Memory kept free for area changes**: cold guest memory packed into a compacted slab store, a background scanner that keeps 2.5 GiB free, two-tier emergency packing, ASTC conversion in 64 MiB batches, allocator recovery, and the heap in 32 MiB pieces.
 - **Compute pipelines rebuilt on a worker thread**, from [Nolar-Hack/Lichii](https://github.com/Nolar-Hack/Lichii).
 - **Defaults from the measured run**: Fast GPU, Compact memory and Block list on. MihawkGen frame generation is available in **Settings > Video** and off by default.
-- **No update check**: homebrew.page's entry for `PPSA99008` is upstream ProsperoEden, whose releases would replace this build.
+- **No update check**: homebrew.page's entry for `PPSA99009` is upstream ProsperoEden, whose releases would replace this build.
 
 ### Fixes
 
@@ -98,8 +98,8 @@ This alpha adds post-processing looks and wallpapers of your own, frees more mem
 
 ### New and improved
 
-- **Post-processing (new setting).** **Settings > Video > Post-processing**, and the same row in a game's own settings, draws a look over the picture with ReShade FX effects: Off, or one of six presets that come with the app (Anime, Cinematic, Clean, Dreamy, Retro, Vivid). Presets of your own go in `/data/prosperoeden/user/post_presets/` and their effects in `/data/prosperoeden/user/post_shaders/`. It works with the Vulkan renderer; see [Post-processing](https://github.com/blackbearreloaded/ProsperoEden/blob/main/docs/SETTINGS.md#post-processing).
-- **A wallpaper of your own (new setting).** **Settings > Appearance > Wallpaper** shows an image from `/data/prosperoeden/wallpapers` behind the launcher's screens instead of the theme's artwork: PNG or JPEG (also BMP, GIF, TGA and DDS), put in the folder over FTP and listed when the dialog opens. A game's own cover still takes the place where the theme shows one. An image of another shape is resized to fit the screen whole, with the theme behind what it leaves over. See [Wallpapers](WALLPAPERS.md).
+- **Post-processing (new setting).** **Settings > Video > Post-processing**, and the same row in a game's own settings, draws a look over the picture with ReShade FX effects: Off, or one of six presets that come with the app (Anime, Cinematic, Clean, Dreamy, Retro, Vivid). Presets of your own go in `/data/lichii/user/post_presets/` and their effects in `/data/lichii/user/post_shaders/`. It works with the Vulkan renderer; see [Post-processing](https://github.com/blackbearreloaded/ProsperoEden/blob/main/docs/SETTINGS.md#post-processing).
+- **A wallpaper of your own (new setting).** **Settings > Appearance > Wallpaper** shows an image from `/data/lichii/wallpapers` behind the launcher's screens instead of the theme's artwork: PNG or JPEG (also BMP, GIF, TGA and DDS), put in the folder over FTP and listed when the dialog opens. A game's own cover still takes the place where the theme shows one. An image of another shape is resized to fit the screen whole, with the theme behind what it leaves over. See [Wallpapers](WALLPAPERS.md).
 - **More free memory in 64-bit games.** The emulated console's memory is now taken from the PS5 only where a game writes it, and given back where the game's console clears or frees it, or where it holds only zeroes again. Two games measured on the console held 644 MiB and 1,956 MiB less, at the same frame rate. After "A Compressed RAM Service" (Gregory Price, Linux Plumbers 2026).
 - **Compact memory (new Performance setting, off by default).** Gives back memory a game wrote but left mostly empty, 16 KiB at a time: 100 to 300 MiB more in the same two games. A game that keeps rewriting such memory can stutter; leave it off unless a game runs short of memory.
 - **Games with many shaders start, and start faster the next time.** A game with thousands of pipelines could stop during its loading screen because the locks that guard pipeline builds ran out; they are now shared. The graphics driver keeps its compiled shaders between starts on every setup, and its pipeline cache is kept when a write is cut short, so a large game compiles them once instead of at every start. A line at launch says where the cache is kept.
@@ -217,8 +217,8 @@ And to everyone who tests ProsperoEden on their own console and reports what the
 - **Public rooms.** A list of the rooms in Eden's public directory, with each room's game, how many players it has and whether it asks for a password. Rooms you can join come first, the busiest at the top; Left and Right move a page at a time and Triangle refreshes. Rooms that use another protocol version are marked and cannot be joined.
 - **For a stable multiplayer session**, everyone needs the same game and the same update of it, and the player who hosts the lobby should use 1x resolution with frame generation off. A host that cannot hold full speed ends the session for everyone.
 - **Connection problems are explained.** When a room cannot be joined, a panel says what happened and what to try: a wrong password, a full room, a room that did not answer, a name already in use. **Settings > Diagnostics** has the detailed log to send with a report.
-- **Self-update keeps the version it replaces.** After an update, the previous version's files stay in `/data/prosperoeden/previous-version/PPSA99008-backup` until the next update. See [Going back to the previous version](INSTALL.md#going-back-to-the-previous-version).
-- **One place for your data.** Settings, saves and covers are only ever in `/data/prosperoeden`. When ProsperoEden could not get access to the console's storage at a start, it used to carry on with empty settings and no saves, which looked as if they had been lost; it now says so on the home screen and starts no game. Keys, firmware and games that an early version kept inside the app's folder are moved to `/data/prosperoeden` at the first start, so that replacing the app cannot remove them.
+- **Self-update keeps the version it replaces.** After an update, the previous version's files stay in `/data/lichii/previous-version/PPSA99009-backup` until the next update. See [Going back to the previous version](INSTALL.md#going-back-to-the-previous-version).
+- **One place for your data.** Settings, saves and covers are only ever in `/data/lichii`. When ProsperoEden could not get access to the console's storage at a start, it used to carry on with empty settings and no saves, which looked as if they had been lost; it now says so on the home screen and starts no game. Keys, firmware and games that an early version kept inside the app's folder are moved to `/data/lichii` at the first start, so that replacing the app cannot remove them.
 - **120 Hz holds on a display with a variable refresh rate.** With **Refresh rate** at 120 Hz, such a display was read as not having switched and the output went back to 60 Hz.
 - **No more lost graphics device in shader-heavy scenes.** Long scenes could stop a game with `VK_ERROR_DEVICE_LOST`; draws are now handed to the GPU in smaller batches. Contributed by [Bauls Deep](https://github.com/bawsdeep).
 - **Eden updated** to its revision of 8 October (`67bada77`), together with the Vulkan driver (Mesa), its tools and the Payload SDK.
@@ -266,7 +266,7 @@ A bug fix for v1.000.090. If you are on v1.000.090, update.
 - **ProsperoEden starts wherever it is installed.** On a USB drive, extended storage, an etaHEN games folder or any other place ShadowMountPlus mounts it from, it could not find its own files and closed after a moment. It now reads its files from where the PS5 mounts the running app.
 - **Updates from the menu work on those installs too.** The update helper updates the folder ShadowMountPlus mounted the app from; an app installed as an image is not changed, and the dialog says to replace the image.
 - **Clearer error when the menu cannot start**, naming the file and the reason.
-- **Start-up trace for bug reports.** Each start-up step is written to the kernel log (`[ProsperoEden diag]`) and to `/data/prosperoeden/logs/boot-trace.txt`.
+- **Start-up trace for bug reports.** Each start-up step is written to the kernel log (`[ProsperoEden diag]`) and to `/data/lichii/logs/boot-trace.txt`.
 
 ## v1.000.060
 
@@ -310,10 +310,10 @@ A bug fix for v1.000.090. If you are on v1.000.090, update.
 - **Output resolution.** **Settings > Video** has a new **Output resolution** row: 1080p (as before), 1440p or 2160p. It is the size of the picture ProsperoEden puts out, for the menu and for games. Until now a game's picture was made at 1080p and enlarged, whatever its internal resolution; at 2160p the upscaling filter scales the game straight to a 4K picture. A larger picture needs more graphics memory.
 - **3x and 4x resolution.** The internal resolution now goes up to 4x. These need far more graphics memory than 2x; a game that runs out says so, and can be given its own lower resolution.
 - **Patches for more frames than the display shows.** A game patched to run faster than the output refreshes keeps its pace: the frames the display has no refresh for are left out.
-- **Crash reports.** If ProsperoEden stops because of an error, it writes `crash-<date>-<time>.txt` to `/data/prosperoeden/logs`, starts again and says on the home screen where the report is. That session's logs are kept beside it, and the five newest reports stay. A report holds what failed, where in the app's code, and what was running; it never holds the contents of memory.
+- **Crash reports.** If ProsperoEden stops because of an error, it writes `crash-<date>-<time>.txt` to `/data/lichii/logs`, starts again and says on the home screen where the report is. That session's logs are kept beside it, and the five newest reports stay. A report holds what failed, where in the app's code, and what was running; it never holds the contents of memory.
 - The launcher and the OpenGL renderer use the PS5 OpenGL 4.6 SDK 1.0.0.
-- The graphics driver's shader cache moved to `/data/prosperoeden/cache`, so a read-only package install keeps it.
-- **Experimental: block list.** With an empty file named `block-list.txt` in `/data/homebrew/PPSA99008`, ProsperoEden saves which code a 64-bit game compiled and compiles it again on a spare CPU when the game next starts. In a repeat session of a large open-world game, the emulated cores then compiled 426 blocks during play instead of 138,262, and gameplay started at 30 FPS instead of 22. It is off by default until more games have run with it.
+- The graphics driver's shader cache moved to `/data/lichii/cache`, so a read-only package install keeps it.
+- **Experimental: block list.** With an empty file named `block-list.txt` in `/data/homebrew/PPSA99009`, ProsperoEden saves which code a 64-bit game compiled and compiles it again on a spare CPU when the game next starts. In a repeat session of a large open-world game, the emulated cores then compiled 426 blocks during play instead of 138,262, and gameplay started at 30 FPS instead of 22. It is off by default until more games have run with it.
 
 ## v1.000.030
 
@@ -339,7 +339,7 @@ A bug fix for v1.000.090. If you are on v1.000.090, update.
 
 - **Vulkan is now the recommended and default renderer.** OpenGL remains available in Settings.
 - **Choose where your game files live.** The new **Settings > Game files** browser selects any folder, including external drives and USB devices. The old `assets/` folder keeps working until you choose one.
-- **App data moved to `/data/prosperoeden`.** Config, logs, covers, and saves now live outside the app folder, so updating the app never touches them.
+- **App data moved to `/data/lichii`.** Config, logs, covers, and saves now live outside the app folder, so updating the app never touches them.
 - **Settings are now stored in one JSON file.** Earlier text settings are migrated automatically on first launch.
 - **Faster Library navigation**, and covers and recent games that survive folder moves.
 - **New icons** for controller actions, pages, and the Handheld / Docked mode.

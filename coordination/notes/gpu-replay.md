@@ -56,14 +56,14 @@ Working on the PC (commits 043694a recorder, 6df9658 replay, fdffbb7 filter + CP
 - Next: the player in the console build (dev setting), the capture copied to the Pro.
 
 ## Done (2026-11-01 night): PC and Pro
-- Console: coordination/replay-run.sh <tag> <checkout> /data/prosperoeden/captures/mkw-race-4.bin
+- Console: coordination/replay-run.sh <tag> <checkout> /data/lichii/captures/mkw-race-4.bin
   [dev settings]: install, replay, clean exit, 165 s. Prints "GPU thread CPU time" (the number to
   compare) and draws (must equal the capture's). Repeats: 15.51 / 15.49 / 15.48 / 15.49 s.
 - PC: pc-run.sh ... EDEN_HOST_GPU_REPLAY=/work/capture.bin (capture moved into the run folder).
   12.03 s for mkw-race-4. Never time a replay while anything else builds or runs (a compile made
   it 27 s instead of 15).
 - Capture mkw-race-4 (5.9 GB, split off, 2,100 lists, 576,623 draws) is on the PC
-  (captures/mkw-race-4.bin) and on the console (/data/prosperoeden/captures/).
+  (captures/mkw-race-4.bin) and on the console (/data/lichii/captures/).
 
 ## Overnight 2026-11-02: CPU cuts don't move the race fps
 - Real-game A/B on the Pro (3 interleaved pairs, race windows): base 22.6 / 24.0 / 25.2 fps,
@@ -157,7 +157,7 @@ Working on the PC (commits 043694a recorder, 6df9658 replay, fdffbb7 filter + CP
   the PC: coordination/pc-capture-race.sh mkw-race-5 300 (scripted pad as the Pro's development
   replay: EDEN_HOST_PAD="45:47:10:1:0xc00;50:200:5:1:0x2000;200:900:0.5:0.44:0x2000"), 2,100
   lists from 300 s, 827,101 draws (mkw-race-4: 576,623), lap 1 of 3 in pictures. 6.2 GB, also on
-  the console at /data/prosperoeden/captures/mkw-race-5.bin.
+  the console at /data/lichii/captures/mkw-race-5.bin.
 - Pictures: coordination/pc-replay-pictures.sh <name> (PC), EDEN_GPU_REPLAY_DUMP=all on the Pro.
 - PC runs cap the texture cache at 4-5 GB (EDEN_NX2_TC_EXPECTED_MIB/CRITICAL_MIB): filling the
   RTX 3070's 8 GB left its driver unable to create a device until a reboot.

@@ -64,6 +64,10 @@ struct BlockOfCode {
     unsigned char* top;
     size_t size = 0, protection_end = 0, executable_end = 0, write_begin = 0;
     bool writing = true;
+    const u8* cold_ptr = nullptr;
+    const u8* cold_end = nullptr;
+    const u8* hot_resume = nullptr;
+    bool cold_active = false, writing_cold = false;
     std::vector<size_t> patch_pages;
     CodePtr code_begin;
     bool prelude_complete = true;

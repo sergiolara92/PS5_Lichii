@@ -10,7 +10,7 @@ read) the theme's own art shows, as before.
 The images are read from the wallpapers folder on the console:
 
 ```
-/data/prosperoeden/wallpapers
+/data/lichii/wallpapers
 ```
 
 The app creates the folder when it starts. Put images in it over FTP while the app is

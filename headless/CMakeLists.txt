@@ -2989,8 +2989,8 @@ if(EDEN_PS5_OPENGL)
     # In-flight guest waits must also unwind before Stop can join the worker.
     foreach(unit dma_pusher engines/puller)
         file(READ "${PROJECT_SOURCE_DIR}/src/video_core/${unit}.cpp" command_source)
-        string(REPLACE "        sync_cv.wait(lk, [this]() { return synced; });"
-            "        while (!synced && !system.IsShuttingDown())\n            sync_cv.wait_for(lk, std::chrono::milliseconds(10));\n        if (system.IsShuttingDown()) return false;" command_source "${command_source}")
+        string(REPLACE "        sync_cv.wait(lk, [this]() { return synced.load(); });"
+            "        while (!synced.load() && !system.IsShuttingDown())\n            sync_cv.wait_for(lk, std::chrono::milliseconds(10));\n        if (system.IsShuttingDown()) return false;" command_source "${command_source}")
         string(REPLACE "    while (word != value) {" "    while (word != value && !dma_pusher.system.IsShuttingDown()) {" command_source "${command_source}")
         if(unit STREQUAL "dma_pusher")
             # Guest writes queued while a cache lock was held (performance.h cpu_write_defer) reach the
@@ -3295,7 +3295,7 @@ if(PS5_NATIVE)
         "#elif defined(PS5_NATIVE)\n        eden_path = Eden::UserDir();\n        eden_path_cache = eden_path / CACHE_DIR;\n        eden_path_config = eden_path / CONFIG_DIR;\n#else\n        eden_path = GetCurrentDir() / PORTABLE_DIR;" paths_source "${paths_source}")
     string(REPLACE "#else\n        // In Ryujinx's infinite wisdom"
         "#elif defined(PS5_NATIVE)\n        GenerateLegacyPath(EmuPath::RyujinxDir, eden_path / RYUJINX_DIR);\n#else\n        // In Ryujinx's infinite wisdom" paths_source "${paths_source}")
-    # Eden's user folder follows the storage layout (storage_paths.h: /data/prosperoeden/user with
+    # Eden's user folder follows the storage layout (storage_paths.h: /data/lichii/user with
     # filesystem access, the sandbox's download0 without).
     set(paths_source "#include \"${EDEN_PORT_DIR}/storage_paths.h\"
 ${paths_source}")
@@ -3318,9 +3318,14 @@ ${paths_source}")
     string(REPLACE "${old_tsc_fallback}" "        }" features_source "${features_source}")
     # Eglantine estimates after the leaves when nothing was found (its AMD case): the same place,
     # so only its condition widens to the port's (a reading under 1 GHz is no TSC rate either).
+    set(no_leaf_tsc_fallback "    if (max_std_fn < 0x15 && caps.invariant_tsc && caps.tsc_frequency == 0) {\n")
+    string(FIND "${features_source}" "${no_leaf_tsc_fallback}" no_leaf_tsc_offset)
     set(zero_tsc_fallback "    if (caps.invariant_tsc && caps.tsc_frequency == 0) {\n")
     string(FIND "${features_source}" "${zero_tsc_fallback}" zero_tsc_offset)
-    if(zero_tsc_offset GREATER_EQUAL 0)
+    if(no_leaf_tsc_offset GREATER_EQUAL 0)
+        string(REPLACE "${no_leaf_tsc_fallback}" "    if (caps.invariant_tsc && caps.tsc_frequency < 1'000'000'000ULL) {\n"
+            features_source "${features_source}")
+    elseif(zero_tsc_offset GREATER_EQUAL 0)
         string(REPLACE "${zero_tsc_fallback}" "    if (caps.invariant_tsc && caps.tsc_frequency < 1'000'000'000ULL) {\n"
             features_source "${features_source}")
     else()

@@ -44,7 +44,7 @@ fi
 echo "console lock taken: $tag ($checkout)$([[ ${PRIORITY:-0} == 1 ]] && echo ' [priority]')" | tee -a "$C/runs/console.log"
 S=$C  # fetch helpers below
 cd "$checkout" || exit 1
-[[ -d build/dev/PPSA99008 ]] || { echo "no build/dev/PPSA99008 in $checkout (make ns2-dev)"; exit 1; }
+[[ -d build/dev/PPSA99009 ]] || { echo "no build/dev/PPSA99009 in $checkout (make ns2-dev)"; exit 1; }
 # The build must link the driver the shared archive holds (a stale isolated copy linked the old
 # driver into every worktree on 2026-11-04 and voided their fault counts).
 siblings=$(cat .local/siblings 2>/dev/null || echo ..)  # the checkout's sibling folder (PROSPERO_SIBLINGS)
@@ -54,7 +54,7 @@ if [[ ${ALLOW_OLD_DRIVER:-0} != 1 && $isolated != "$shared" ]]; then
     echo "REFUSED: $checkout links a driver copy isolated from another archive; rm build/radv-isolated/libvulkan_radeon.ps5.a and rebuild (ALLOW_OLD_DRIVER=1 to run anyway)"
     exit 1
 fi
-timeout 900 make install PS5_HOST=$HOST APP=build/dev/PPSA99008 > $out/install.log 2>&1 || { echo "INSTALL FAILED"; exit 1; }
+timeout 900 make install PS5_HOST=$HOST APP=build/dev/PPSA99009 > $out/install.log 2>&1 || { echo "INSTALL FAILED"; exit 1; }
 ftp() {  # ftp put NAME TEXT | ftp get REMOTE LOCAL | ftp rm REMOTE
     timeout 60 python3 -I - "$@" <<'PY'
 import ftplib, io, sys
@@ -69,13 +69,13 @@ except ftplib.all_errors as e: print(f"ftp {op} {sys.argv[2]}: {e}", file=sys.st
 f.quit()
 PY
 }
-APP=/data/homebrew/PPSA99008
+APP=/data/homebrew/PPSA99009
 ftp rm $APP/compat-input.txt 2>/dev/null; ftp rm $APP/quit-app.txt 2>/dev/null
-ftp rm /data/prosperoeden/logs/game-frame.ppm 2>/dev/null; ftp rm $APP/capture-once.txt 2>/dev/null
+ftp rm /data/lichii/logs/game-frame.ppm 2>/dev/null; ftp rm $APP/capture-once.txt 2>/dev/null
 # DEV_SETTINGS="cram_fine=on ...": one-run A/B switches (main.cpp dev-settings.txt); none = defaults.
 if [[ -n ${DEV_SETTINGS:-} ]]; then ftp put $APP/dev-settings.txt "$DEV_SETTINGS"; else ftp rm $APP/dev-settings.txt 2>/dev/null; fi
 cd /home/mihawk/Desktop/PS5_Homebrews/PS5_Vulkan
-PS5_HOST=$HOST timeout $((700 - SHIFT)) python3 tools/run-title.py PPSA99008 \
+PS5_HOST=$HOST timeout $((700 - SHIFT)) python3 tools/run-title.py PPSA99009 \
     --until 'EDEN_GUEST_EXCEPTION|EDEN_GUEST_BACKTRACE|Userspace PANIC' --timeout $((540 - SHIFT)) \
     --output $out/klog.log > $out/run.out 2>&1 &
 runner=$!
@@ -86,14 +86,14 @@ STOP_AT=${STOP_AT:-425}  # first stop attempt (seconds after launch)
 for t in $(seq ${PRESS_FROM:-60} 15 $((STOP_AT - 15))); do
     at $((t + SHIFT)) || break
     if (( t % 60 == 0 )); then
-        ftp get /data/prosperoeden/logs/game-frame.ppm $out/frame-$t.ppm 2>/dev/null
+        ftp get /data/lichii/logs/game-frame.ppm $out/frame-$t.ppm 2>/dev/null
         ftp put $APP/capture-once.txt "1"
     fi
     [[ ${PRESS:-0} == 1 ]] && press 16384 200   # Cross (PRESS=1; off by default: the tester drives the pad)
 done
 # The race's logs before the stop: a stop that hangs restarts the app, whose new session overwrites them.
-ftp get /data/prosperoeden/logs/heap.log $out/heap-prestop.txt
-ftp get /data/prosperoeden/user/log/eden_log.txt $out/eden_log-prestop.txt
+ftp get /data/lichii/logs/heap.log $out/heap-prestop.txt
+ftp get /data/lichii/user/log/eden_log.txt $out/eden_log-prestop.txt
 if kill -0 $runner 2>/dev/null; then
     # TouchPad+L1 back to the launcher, then quit-app.txt there; again every 25 s until the app
     # has gone (a crash restarts it into a loading game, which ignores the shortcut).
@@ -103,7 +103,7 @@ if kill -0 $runner 2>/dev/null; then
     done
 fi
 wait $runner
-for n in heap:/data/prosperoeden/logs/heap.log stderr:/data/prosperoeden/logs/stderr.log eden_log:/data/prosperoeden/user/log/eden_log.txt; do
+for n in heap:/data/lichii/logs/heap.log stderr:/data/lichii/logs/stderr.log eden_log:/data/lichii/user/log/eden_log.txt; do
     ftp get ${n#*:} $out/${n%%:*}.txt
 done
 for n in heap eden_log; do

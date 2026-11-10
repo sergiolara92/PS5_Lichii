@@ -20,10 +20,20 @@ code=r'''
 #include <mutex>
 #include <stop_token>
 #include <thread>
+#include <variant>
+#include <vector>
 #include "common/bounded_threadsafe_queue.h"
 using u64=unsigned long long;
-using CommandData=int;
-struct Item { int command{}; u64 fence{}; bool block{}; };
+struct SubmitListCommand { int channel{}; struct Entries { std::vector<int> command_lists; } entries; };
+using CommandData=std::variant<SubmitListCommand,int>;
+struct Item { CommandData command{}; u64 fence{}; bool block{}; };
+namespace Common::Nx2Timeline {
+inline bool Active() { return false; }
+struct Arg { template<class T> Arg(const char*, T) {} };
+inline void Instant(const char*, Arg) {}
+inline void Instant(const char*, Arg, Arg, Arg) {}
+struct ArgSpan { ArgSpan(const char*, Arg) {} };
+}
 struct ThreadManager {
  struct { std::mutex write_lock; u64 last_fence{}; std::atomic<u64> signaled_fence{};
           Common::SPSCQueue<Item,2> queue; std::condition_variable_any cv; } state;
@@ -57,8 +67,8 @@ int main() {
  manager.stop_source.request_stop();
  assert(blocked.wait_for(std::chrono::seconds(1))==std::future_status::ready);
  assert(blocked.get()==0);
- Item item; assert(manager.state.queue.TryPop(item)&&item.command==1);
- assert(manager.state.queue.TryPop(item)&&item.command==2);
+ Item item; assert(manager.state.queue.TryPop(item)&&std::get<int>(item.command)==1);
+ assert(manager.state.queue.TryPop(item)&&std::get<int>(item.command)==2);
  assert(!manager.state.queue.TryPop(item));
  assert(manager.PushCommand(4,false,true)==0);
  assert(!manager.state.queue.TryPop(item));

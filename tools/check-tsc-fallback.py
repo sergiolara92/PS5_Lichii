@@ -11,8 +11,11 @@ derived = (cache / 'native-local/headless/cpu_features.cpp').read_text()
 expected = original.replace('        } else {\n            caps.tsc_frequency = X64::EstimateRDTSCFrequency();\n        }', '        }')
 # A source that already estimates after the leaves when nothing was found (Eglantine) has its
 # condition widened; otherwise the estimate is added there (headless/CMakeLists.txt).
+no_leaf_fallback = '    if (max_std_fn < 0x15 && caps.invariant_tsc && caps.tsc_frequency == 0) {\n'
 zero_fallback = '    if (caps.invariant_tsc && caps.tsc_frequency == 0) {\n'
-if zero_fallback in expected:
+if no_leaf_fallback in expected:
+    expected = expected.replace(no_leaf_fallback, "    if (caps.invariant_tsc && caps.tsc_frequency < 1'000'000'000ULL) {\n")
+elif zero_fallback in expected:
     expected = expected.replace(zero_fallback, "    if (caps.invariant_tsc && caps.tsc_frequency < 1'000'000'000ULL) {\n")
 else:
     expected = expected.replace(

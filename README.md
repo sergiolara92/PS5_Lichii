@@ -49,8 +49,8 @@ Switch 2 game fit at all.
 > [!WARNING]
 > **This is an early pre-release.** One game has been measured end to end (Ocarina of Time on the
 > PS5 Pro). Expect hitches, out-of-memory stops in heavy areas, and games that do not start.
-> It installs as **ProsperoEden (`PPSA99008`)** and replaces a ProsperoEden already installed;
-> settings, saves and game files under `/data/prosperoeden` are shared with it.
+> It installs as **ProsperoEden (`PPSA99009`)** and replaces a ProsperoEden already installed;
+> settings, saves and game files under `/data/lichii` are shared with it.
 
 ## 📊 Where it stands
 
@@ -156,7 +156,7 @@ build goes into keeping that headroom, without stalling the game:
 **Defaults in this build** (the settings run 50 was measured with): **Fast GPU** on, **Compact
 memory** on, **Block list** on. Frame generation is off; turn on **MihawkGen** in
 **Settings > Video > Frame generation** for 60 fps output. The update check is off: the
-homebrew.page entry for `PPSA99008` is upstream ProsperoEden, whose releases would replace this one.
+homebrew.page entry for `PPSA99009` is upstream ProsperoEden, whose releases would replace this one.
 
 ## 📦 Install
 
@@ -164,9 +164,9 @@ homebrew.page entry for `PPSA99008` is upstream ProsperoEden, whose releases wou
 > Use [ShadowMountPlus 1.7beta4](https://github.com/drakmor/ShadowMountPlus/releases/tag/1.7beta4) or newer: it mounts the app and gives it `/data` and your drives.
 
 1. Download `PS5_Lichii-v1.00.00.zip` from the [releases](../../releases) and extract it.
-2. Copy the `PPSA99008` folder to `/data/homebrew/PPSA99008` on the PS5 (close ProsperoEden first).
-3. Put your own `prod.keys` in `/data/prosperoeden/keys/` and your own firmware files in `/data/prosperoeden/firmware/`.
-4. Put each game's file (`.xci`, `.nup` or `.nsp`) in `/data/prosperoeden/roms/`, or in a folder of its own there, then open **Library**.
+2. Copy the `PPSA99009` folder to `/data/homebrew/PPSA99009` on the PS5 (close ProsperoEden first).
+3. Put your own `prod.keys` in `/data/lichii/keys/` and your own firmware files in `/data/lichii/firmware/`.
+4. Put each game's file (`.xci`, `.nup` or `.nsp`) in `/data/lichii/roms/`, or in a folder of its own there, then open **Library**.
 
 | Shortcut | Action |
 |---|---|
@@ -180,7 +180,7 @@ starts it as a Switch 2 game when it is one (a `.nup` always; an `.xci` or `.nsp
 Switch 1 games in the same folder keep starting as before.
 
 ```
-/data/prosperoeden/roms/
+/data/lichii/roms/
 ├── Mario Kart World.xci
 ├── oot/
 │   └── Ocarina of Time.nup
@@ -207,8 +207,8 @@ loose dump (`exefs/` and `romfs/` folders), or a NUP started without its update 
   "schema": 1,
   "enabled": true,
   "mode": "execute",
-  "exefs": "/data/prosperoeden/roms/<game>/exefs",
-  "romfs": { "kind": "loose", "path": "/data/prosperoeden/roms/<game>/romfs" }
+  "exefs": "/data/lichii/roms/<game>/exefs",
+  "romfs": { "kind": "loose", "path": "/data/lichii/roms/<game>/romfs" }
 }
 ```
 
@@ -226,7 +226,7 @@ On Linux (Ubuntu 26.04, Arch or CachyOS; on CachyOS/Arch run `tools/setup-cachyo
 
 ```bash
 make deps        # every input at its pinned revision
-make package     # the app: build/release/PPSA99008
+make package     # the app: build/release/PPSA99009
 make release     # dist/: the ZIP, SHA256SUMS and release notes
 make test        # the PC test suites
 make ns2-host    # a Linux build of the same emulator, for fast PC runs

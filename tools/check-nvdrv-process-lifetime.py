@@ -15,6 +15,7 @@ code=r'''
 #include <vector>
 using DAddr=unsigned long;using VAddr=unsigned long;
 namespace Common::Literals {}
+namespace Devices { struct Nx2GpuMemoryRegistry { static Nx2GpuMemoryRegistry& Get(){static Nx2GpuMemoryRegistry value;return value;} void ForgetDeviceRanges(size_t){} }; }
 namespace Core {struct Asid {size_t id;};}
 namespace Kernel {struct KProcess {int refs=1,memory=7; bool registered=false; int& GetMemory(){assert(refs);return memory;} void Open(int){assert(refs);++refs;} void Close(int){assert(refs);if(!--refs){assert(!registered);memory=0;}}};}
 struct SessionId {size_t id;};

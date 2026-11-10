@@ -3,7 +3,7 @@
 timeout 120 python3 -I - "$1" <<'PY'
 import ftplib, sys, os
 f = ftplib.FTP(); f.connect(__import__("os").environ["PS5_HOST"], 2121, timeout=30); f.login(); f.voidcmd("TYPE I")
-f.cwd("/data/prosperoeden/logs"); lines = []; f.retrlines("LIST", lines.append)
+f.cwd("/data/lichii/logs"); lines = []; f.retrlines("LIST", lines.append)
 names = [l.split()[-1] for l in lines]
 c = sorted(n for n in names if n.startswith("crash-") and n.endswith(".txt") and n.count("-") == 2)[-1]
 for n in (c, c[:-4] + "-heap.log", c[:-4] + "-stderr.log", "boot-trace.txt"):

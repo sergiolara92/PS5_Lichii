@@ -14,7 +14,7 @@ for v in "$@"; do
 import ftplib
 f = ftplib.FTP(); f.connect(__import__("os").environ["PS5_HOST"], 2121, timeout=30); f.login()
 for name in ("fastmem64-sites", "fastmem64-code-sites", "fastmem64-sites2"):
-    try: f.delete("/data/prosperoeden/user/cache/jit/0400C3F00006E000." + name)
+    try: f.delete("/data/lichii/user/cache/jit/0400C3F00006E000." + name)
     except Exception as e: print("no demotion list:", e)
 PY
     fi
