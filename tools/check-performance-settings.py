@@ -18,7 +18,7 @@ release = main[:begin] + main[end:]  # what a release build compiles
 assert 'const auto speed = Eden::LoadPerformance(eden_game_title_id(library_entry.c_str()));' in release
 # Preserve the selected library identity before a folder entry becomes an NSO.
 snapshot = release.index('const std::string library_entry = selected_game;')
-route = release.index('if (!research_selected && Eden::IsFolderGameEntry(selected_game))')
+route = release.index('if (!research_selected && UsesSwitch2Route(selected_game))')
 translated = release.index('selected_game = research.TakeEntryPoint();', route)
 assert snapshot < route < translated < release.index('const auto speed = Eden::LoadPerformance(eden_game_title_id(library_entry.c_str()));')
 
