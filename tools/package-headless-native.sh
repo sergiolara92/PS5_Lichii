@@ -63,11 +63,13 @@ cp "$root/build/self-update/self-updater.elf" "$app/self-updater.elf"
 cp "$root/sce_sys/"{param.json,icon0.png,pic0.dds,pic1.dds,snd0.at9} "$app/sce_sys/"
 rm -rf "$app/ui"
 cp -a "$root/headless/prosperoeden/ui" "$app/ui"
-# MihawkGen neural frame generation weights (headless/prosperoeden/eden_services.cpp: mihawkgen_state).
-mihawkgen_weights="${PROSPERO_SIBLINGS:-$root/..}/mihawk-framegen-review/framegen/models/network.fgw"
-if grep -qx 'EDEN_PS5_MIHAWKGEN:BOOL=ON' "$out/CMakeCache.txt" && [[ -f "$mihawkgen_weights" ]]; then
+# MihawkGen v1.0.0 weights and license are pinned in the source tree.
+if grep -qx 'EDEN_PS5_MIHAWKGEN:BOOL=ON' "$out/CMakeCache.txt"; then
+    mihawkgen_dir="$root/headless/mihawkgen"
+    (cd "$mihawkgen_dir" && sha256sum --check --strict network.fgw.sha256)
     mkdir -p "$app/mihawkgen"
-    cp "$mihawkgen_weights" "$app/mihawkgen/network.fgw"
+    cp "$mihawkgen_dir/network.fgw" "$app/mihawkgen/network.fgw"
+    cp "$mihawkgen_dir/LICENSE.md" "$app/licenses/MihawkGen-GPL-3.0-or-later.txt"
 fi
 # The switches the runner reads from the app folder (headless/main.cpp). Only a development
 # package gets them: the profile title otherwise takes its timed input replay instead of the

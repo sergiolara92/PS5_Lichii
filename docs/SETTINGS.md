@@ -124,7 +124,7 @@ Restart ProsperoEden after adding files: the list is read when the menu opens. A
 
 Frame generation shows, between two pictures a game draws, one that is made up from them. A game that runs at 30 FPS then looks like 60. It does not make the game itself faster, it adds a little delay between a button and its effect, and fast motion can show faults in the made-up pictures. It works with the Vulkan renderer.
 
-**Frame gen method** chooses how the pictures are made: **MihawkGen**, a neural network that comes with the app and needs nothing else, or Lossless Scaling. A method that is not available on the console is skipped.
+**Frame gen method** chooses how the pictures are made: **MihawkGen**, whose weights are bundled in builds with MihawkGen support, or Lossless Scaling. A method that is not available on the console is skipped.
 
 Lossless Scaling's frame generation ([Lossless Scaling](https://store.steampowered.com/app/993090/Lossless_Scaling/)) cannot be included with ProsperoEden: for it you need your own copy of that program.
 

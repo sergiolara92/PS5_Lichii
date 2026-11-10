@@ -40,6 +40,9 @@ builds on the following projects, each under its own license.
 
 ## Graphics
 
+- **[PS5 MihawkGen](https://github.com/mihawk-99/PS5_MihawkGen), release v1.0.0**,
+  GPL-3.0-or-later. Its trained frame-generation weights are in `headless/mihawkgen` and are
+  bundled with MihawkGen-enabled builds alongside their license.
 - **[PS5 Mesa](https://github.com/mihawk-99/PS5_Mesa)** and
   **[PS5 Vulkan](https://github.com/mihawk-99/PS5_Vulkan)** by Mihawk. The
   RADV Vulkan driver (Mesa, mainly MIT) and its PS5 link recipe and platform

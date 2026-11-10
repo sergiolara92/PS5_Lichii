@@ -26,8 +26,9 @@ REQUIRED.update(p.relative_to(APP).as_posix() for p in (APP / 'ui').rglob('*') i
 # are required exactly when the build put them there (tools/package-headless-native.sh).
 if (APP / 'dev-settings.txt').is_file():
     REQUIRED.add('dev-settings.txt')
-if (APP / 'mihawkgen/network.fgw').is_file():
-    REQUIRED.add('mihawkgen/network.fgw')
+MIHAWKGEN_ENABLED = 'EDEN_PS5_MIHAWKGEN:BOOL=ON' in (OUT / 'CMakeCache.txt').read_text()
+if MIHAWKGEN_ENABLED:
+    REQUIRED.update({'mihawkgen/network.fgw', 'licenses/MihawkGen-GPL-3.0-or-later.txt'})
 RECEIPT = ROOT / 'HEADLESS_CANDIDATE.json'
 # The pinned OpenGL SDK release (tools/deps.json): digest of its manifest.sha256.
 GL_SDK_MANIFEST_SHA256 = '0d432edc9d648d6e0cccb4d5eb3db8484f10ba4b075b5ccf23edda3251b66360'
@@ -53,6 +54,8 @@ def check():
         REQUIRED.add('game-assets.json')
     assert {p.relative_to(APP).as_posix() for p in APP.rglob('*') if p.is_file()} == REQUIRED
     assert all(not (APP / p).is_symlink() and (APP / p).stat().st_size for p in REQUIRED)
+    if MIHAWKGEN_ENABLED:
+        assert digest(APP / 'mihawkgen/network.fgw') == '31ecc7d69af1e9defd62b9abad71bc3430cd8a0a4d2f4eafcabaafa48c34bf6b'
     param = json.loads((APP / 'sce_sys/param.json').read_text())
     assert param['titleId'] == 'PPSA99009' and param['contentId'].endswith('PROSPEROEDEN0001')
     assert param['localizedParameters']['en-US']['titleName'] == 'ProsperoEden'
