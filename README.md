@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="sce_sys/icon0.png" width="128" alt="PS5_Lichii icon">
+  <img src="sce_sys/icon0.png" width="192" alt="PS5Lichii app logo">
 </p>
 
 <h1 align="center">PS5_Lichii</h1>
