@@ -56,6 +56,7 @@ def check():
     param = json.loads((APP / 'sce_sys/param.json').read_text())
     assert param['titleId'] == 'PPSA99009' and param['contentId'].endswith('PROSPEROEDEN0001')
     assert param['localizedParameters']['en-US']['titleName'] == 'PS5Lichii'
+    assert param['localizedParameters']['en-GB']['titleName'] == 'PS5Lichii'
     assert param['pubtools']['loudnessSnd0'] == '-28.00'
     lapy = json.loads((APP / 'lapy-manifest.json').read_text())
     assert lapy['schema'] == 'lapy-owned-build/1'

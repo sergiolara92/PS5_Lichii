@@ -89,6 +89,7 @@ value = json.loads((app / 'sce_sys/param.json').read_text())
 assert (value['titleId'], value['conceptId']) == ('PPSA99009', '99008')
 assert value['contentId'] == 'UP9000-PPSA99009_00-PROSPEROEDEN0001'
 assert value['localizedParameters']['en-US']['titleName'] == 'PS5Lichii'
+assert value['localizedParameters']['en-GB']['titleName'] == 'PS5Lichii'
 assert value['pubtools']['loudnessSnd0'] == '-28.00'
 # The app version has one home, sce_sys/param.json: the program was built with the same value.
 assert re.fullmatch(r'\d{2}\.\d{3}\.\d{3}', value['contentVersion']), value['contentVersion']

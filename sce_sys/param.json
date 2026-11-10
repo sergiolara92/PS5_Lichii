@@ -26,6 +26,9 @@
     "defaultLanguage": "en-US",
     "en-US": {
       "titleName": "PS5Lichii"
+    },
+    "en-GB": {
+      "titleName": "PS5Lichii"
     }
   },
   "masterVersion": "01.00",
