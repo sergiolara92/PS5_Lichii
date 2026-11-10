@@ -280,7 +280,7 @@ int eden_extract_game_metadata(const char* rom_path, const char* keys_dir,
     if (!rom_path || !keys_dir || !cover_tga_path || !title || title_capacity == 0) return 0;
     title[0] = '\0';
 #ifdef PROSPERO_DIRECT_RESEARCH
-    if (Eden::IsFolderGameEntry(rom_path) || Eden::IsNupFile(rom_path)) {
+    if (Eden::IsFolderGameEntry(rom_path)) {
         try {
             const auto descriptor = Prospero::Development::ReadResearchDescriptor(rom_path);
             if (descriptor.state != Prospero::Development::DescriptorState::Ready) return 0;
@@ -298,6 +298,32 @@ int eden_extract_game_metadata(const char* rom_path, const char* keys_dir,
     std::string path = rom_path;
     std::transform(path.begin(), path.end(), path.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (path.ends_with(".nup")) {
+        FileSys::NupContainer container(file);
+        if (container.GetStatus() != Loader::ResultStatus::Success) return 0;
+        const auto base = container.FindBasePackage();
+        const auto update = container.FindBestUpdatePackage();
+        const auto selected = update ? update : base;
+        if (!selected) return 0;
+        const auto& packages = container.GetPackages();
+        const auto& package = packages[*selected];
+        int result = 0;
+        if (Eden::UsableName(package.title_name)) {
+            const std::string name = Eden::PlainName(package.title_name);
+            std::snprintf(title, title_capacity, "%s", name.c_str());
+            result |= EDEN_METADATA_TITLE;
+        }
+        const auto write_icon = [&](const FileSys::NupContainer::PackageInfo& source) {
+            if (!source.icon.empty() && WriteTgaBytes(source.icon.data(), source.icon.size(), cover_tga_path, 4096))
+                return true;
+            for (const auto& [language, icon] : source.localized_icons)
+                if (!icon.empty() && WriteTgaBytes(icon.data(), icon.size(), cover_tga_path, 4096)) return true;
+            return false;
+        };
+        if (write_icon(package) || (base && *base != *selected && write_icon(packages[*base])))
+            result |= EDEN_METADATA_COVER;
+        return result;
+    }
     const bool xci = path.size() >= 4 && path.substr(path.size() - 4) == ".xci";
     FileSys::VirtualDir packed_update;
     const auto romfs = OpenControlRomFs(file, xci, &packed_update);
