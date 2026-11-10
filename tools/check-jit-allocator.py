@@ -178,8 +178,10 @@ with tempfile.TemporaryDirectory() as temp:
     for native_mock in (False, True):
         subprocess.run(['clang++-18','-std=c++20','-O2','-I'+str(root/'headless'),
             '-I'+str(scratch/'native-local/headless/include'),
-            '-I'+str(scratch/'source/.cache/cpm/xbyak/v7.40.1'),str(cpp),
+            '-I'+str(scratch/'source/.cache/cpm/xbyak/v7.40.1'),
+            '-I'+str(scratch/'source/.cache/cpm/lz4/ebb370ca83/lib'),str(cpp),
             *(['-DEDEN_JIT_ALIAS_NATIVE=1','-DPS5_NATIVE=1','-Wl,--wrap=mprotect'] if native_mock else []),
-            str(root/'src/memory_pages.cpp'),'-o',str(exe)],check=True)
+            str(root/'src/memory_pages.cpp'),
+            str(scratch/'native-local/_deps/lz4-build/liblz4.a'),'-o',str(exe)],check=True)
         subprocess.run([str(exe)],check=True, cwd=temp)
 print('Production JIT aliases: 512/64/64/16 MiB, overflow, RX write/RW execute faults, live rewrite, a cache that takes its memory as it fills, both-view release and native API partial-failure cleanup PASS (host backend/mocked native APIs)')
