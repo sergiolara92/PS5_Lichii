@@ -70,7 +70,7 @@ namespace {
 // The Switch 2 route (the direct loader): a .eden descriptor, a NUP container, or a game card image or
 // package whose program is a Switch 2 one (title IDs 04...). Other games take Eden's own loader.
 [[maybe_unused]] bool UsesSwitch2Route(const std::string& path) {
-    if (Eden::IsFolderGameEntry(path) || Eden::IsNupFile(path)) return true;
+    if (Eden::IsFolderGameEntry(path) || Eden::IsNupFile(path) || Eden::IsExtractedGameFolder(path)) return true;
     if (!Eden::HasExtension(path, ".xci") && !Eden::HasExtension(path, ".nsp")) return false;
 #ifdef PS5_NATIVE
     return (eden_game_title_id(path.c_str()) >> 56) == 0x04;

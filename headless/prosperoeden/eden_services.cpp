@@ -304,6 +304,10 @@ std::vector<std::string> GameFiles() {
         if (rom(name) && Eden::ValidRomPath(name)) files.push_back(name);
     for (const std::string& folder : ListEntries(roms, true, ok)) {
         if (folder.empty() || folder[0] == '.') continue;
+        if (Eden::IsExtractedGameFolder(JoinPath(roms, folder))) {
+            files.push_back(folder);
+            continue;
+        }
         bool listed = false;
         for (const std::string& name : ListEntries(JoinPath(roms, folder), false, listed)) {
             const std::string file = folder + "/" + name;
@@ -761,17 +765,22 @@ std::vector<pe::ui::Game> EdenServices::games() {
         return sources;
     };
     for (const std::string& file : files) {
-        std::string format = file.substr(file.size() - 3);
+        const std::string path = Eden::AssetsPath("roms/" + file);
+        const bool extracted = Eden::IsExtractedGameFolder(path);
+        std::string format = extracted ? "EXEFS" : file.substr(file.size() - 3);
         std::transform(format.begin(), format.end(), format.begin(),
                        [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
-        const std::string path = Eden::AssetsPath("roms/" + file);
         struct stat info {};
-        if (stat(path.c_str(), &info) != 0 || !S_ISREG(info.st_mode)) continue;
+        if (stat(path.c_str(), &info) != 0 || (!S_ISREG(info.st_mode) && !(extracted && S_ISDIR(info.st_mode)))) continue;
         pe::ui::Game game;
         game.name = CleanTitle(std::filesystem::path(file).filename().string());
-        game.format = Eden::IsFolderGameEntry(file) ? "EXEFS" : format;
-        game.size = Eden::IsFolderGameEntry(file) ? tr("Folder") : SizeLabel(static_cast<double>(info.st_size));
+        game.format = (Eden::IsFolderGameEntry(file) || extracted) ? "EXEFS" : format;
+        game.size = (Eden::IsFolderGameEntry(file) || extracted) ? tr("Folder") : SizeLabel(static_cast<double>(info.st_size));
         game.file = file;
+        if (extracted) {
+            games.push_back(std::move(game));
+            continue;
+        }
         // A game whose data cannot be read is still listed, by its file name.
         try {
             char title[513]{};
@@ -955,7 +964,8 @@ bool EdenServices::remove_profile(int index) {
 }
 
 bool EdenServices::game_exists(const std::string& file) {
-    return Eden::ValidRomPath(file) && IsFile(Eden::AssetsPath("roms/" + file));
+    const std::string path = Eden::AssetsPath("roms/" + file);
+    return Eden::ValidRomPath(file) && (IsFile(path) || Eden::IsExtractedGameFolder(path));
 }
 
 bool EdenServices::docked(std::uint64_t title_id) { return Eden::LoadGameDocked(title_id); }

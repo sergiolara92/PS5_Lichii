@@ -197,7 +197,7 @@ inline int KeyIndex(const std::string& value, const char* const* keys, int count
 // name ("Game.nsp") or a game folder and its name ("Game/Game.nsp", the game's update and DLC
 // beside it). Readable characters, one folder at most, never a hidden folder, "." or "..".
 inline bool ValidRomPath(std::string_view name) {
-    if (name.size() < 5 || name.size() > 511) return false;
+    if (name.empty() || name.size() > 511) return false;
     for (unsigned char c : name)
         if (c < 32 || c == 127 || c == '\\') return false;
     if (const auto slash = name.find('/'); slash != std::string_view::npos) {
@@ -206,6 +206,13 @@ inline bool ValidRomPath(std::string_view name) {
     } else if (name.size() > 255) {
         return false;
     }
+    // A single component can name an extracted game directory; existence and its ExeFS/RomFS
+    // layout are checked by the filesystem caller.
+    if (name.find('/') == std::string_view::npos && name[0] != '.') {
+        const auto extension = name.substr(name.find_last_of('.') == std::string_view::npos ? name.size() : name.find_last_of('.'));
+        if (extension != ".nsp" && extension != ".xci" && extension != ".nup" && extension != ".eden") return true;
+    }
+    if (name.size() < 5) return false;
     std::string extension(name.substr(name.size() - 4));
     for (char& c : extension) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     return extension == ".nsp" || extension == ".xci" || extension == ".nup" || IsFolderGameEntry(name);

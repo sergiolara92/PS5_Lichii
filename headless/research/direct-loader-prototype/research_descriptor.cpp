@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "research_descriptor.h"
+#include "folder_game_entry.h"
 #include <array>
 #include <cctype>
 #include <fstream>
@@ -115,6 +116,12 @@ ResearchDescriptor ParseResearchDescriptor(const std::string& text) {
 }
 
 ResearchDescriptor ReadResearchDescriptor(const std::filesystem::path& file) {
+    if (Eden::IsExtractedGameFolder(file)) {
+        const auto root = std::filesystem::absolute(file).lexically_normal();
+        return ParseResearchDescriptor(Json{{"schema", 1}, {"enabled", true}, {"mode", "execute"},
+            {"exefs", (root / "exefs").string()},
+            {"romfs", {{"kind", "loose"}, {"path", (root / "romfs").string()}}}}.dump());
+    }
     // A Switch 2 game file itself (XCI, NSP or NUP) starts as a descriptor naming it would: no .eden
     // file is needed for one. Its program decides the memory layout (NPDM) as in any descriptor.
     std::string extension = file.extension().string();
