@@ -1172,9 +1172,7 @@ int EdenServices::frame_gen_state() {
 // MihawkGen weights: <user folder>/mihawkgen/network.fgw, or bundled in the app.
 int EdenServices::mihawkgen_state() {
 #ifdef EDEN_PS5_MIHAWKGEN
-    if (Eden::FileExists(Eden::UserDir() + "/mihawkgen/network.fgw")) return 2;
-    if (Eden::FileExists(Eden::AppDir() + "/mihawkgen/network.fgw")) return 2;
-    return 1;
+    return Eden::MihawkGenWeightsPath().empty() ? 1 : 2;
 #else
     return 0;
 #endif

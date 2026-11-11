@@ -76,6 +76,14 @@ inline std::string CoverFile(std::string_view file) {
     return CoversDir() + name;
 }
 inline std::string UserDir() { return std::string{kDataDir} + "/user"; }
+inline std::string MihawkGenWeightsPath() {
+    std::string path = UserDir() + "/mihawkgen/network.fgw";
+    if (FileExists(path)) return path;
+    path = AppDir() + "/mihawkgen/network.fgw";
+    if (FileExists(path)) return path;
+    path = std::string{kInstallDir} + "/mihawkgen/network.fgw";
+    return FileExists(path) ? path : std::string{};
+}
 inline std::string ConfigFile(std::string_view name) { return ConfigDir() + "/" + std::string(name); }
 inline std::string LogFile(std::string_view name) { return LogsDir() + "/" + std::string(name); }
 

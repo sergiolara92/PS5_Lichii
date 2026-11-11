@@ -1679,10 +1679,7 @@ int main(int argc, char** argv) {
                 const bool use_mihawkgen = wants_framegen && video.frame_gen_method == 1;
                 Eden::MihawkGenBridge::active.store(use_mihawkgen);
                 if (use_mihawkgen) {
-                    Eden::MihawkGenBridge::weights_path =
-                        Eden::FileExists(Eden::UserDir() + "/mihawkgen/network.fgw")
-                            ? Eden::UserDir() + "/mihawkgen/network.fgw"
-                            : Eden::AppDir() + "/mihawkgen/network.fgw";
+                    Eden::MihawkGenBridge::weights_path = Eden::MihawkGenWeightsPath();
                     Eden::MihawkGenBridge::target_rate.store(target);
                     Eden::MihawkGenBridge::multiplier.store(multiplier);
                     Settings::values.frame_gen.SetValue(true);
