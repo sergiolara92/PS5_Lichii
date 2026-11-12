@@ -2,6 +2,7 @@
 #pragma once
 #include <string>
 #include <string_view>
+#include <filesystem>
 namespace Eden {
 // A small explicit descriptor for an extracted game, never a renamed NSP/XCI.
 inline bool IsFolderGameEntry(std::string_view path) {
@@ -31,6 +32,13 @@ inline bool HasExtension(std::string_view path, std::string_view extension) {
 // A Switch 2 NUP container: always a Switch 2 game, started like a .eden entry without one.
 inline bool IsNupFile(std::string_view path) {
     return HasExtension(path, ".nup");
+}
+// Eglantine's extracted game dump: the program's ExeFS and the loose RomFS beside it.
+inline bool IsExtractedGameFolder(const std::filesystem::path& path) {
+    std::error_code error;
+    if (!std::filesystem::is_directory(path / "exefs", error) || error) return false;
+    if (!std::filesystem::is_regular_file(path / "exefs" / "main", error) || error) return false;
+    return std::filesystem::is_directory(path / "romfs", error) && !error;
 }
 inline std::string LibraryGameKey(std::string_view path, std::string_view roms) {
     if (!roms.empty() && roms.back() == '/' && path.starts_with(roms))

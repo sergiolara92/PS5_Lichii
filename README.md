@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="sce_sys/icon0.png" width="128" alt="PS5_Lichii icon">
+  <img src="sce_sys/icon0.png" width="192" alt="PS5Lichii app logo">
 </p>
 
 <h1 align="center">PS5_Lichii</h1>
@@ -50,7 +50,7 @@ Switch 2 game fit at all.
 > [!WARNING]
 > **This is an early pre-release.** One game has been measured end to end (Ocarina of Time on the
 > PS5 Pro). Expect hitches, out-of-memory stops in heavy areas, and games that do not start.
-> Since v1.20.00 it installs as **its own title, `PPSA99009`**, with its data in `/data/lichii`: it
+> Since v1.20.00 it installs as its own title, **PS5Lichii (`PPSA99009`)**, with its data in `/data/lichii`: it
 > no longer replaces ProsperoEden or shares its folder. Coming from an earlier pre-release, rename
 > `/data/prosperoeden` to `/data/lichii` before the first start.
 
@@ -180,7 +180,7 @@ no entry of its own on homebrew.page yet.
 > Use [ShadowMountPlus 1.7beta4](https://github.com/drakmor/ShadowMountPlus/releases/tag/1.7beta4) or newer: it mounts the app and gives it `/data` and your drives.
 
 1. Download `PS5_Lichii-v1.20.00.zip` from the [releases](../../releases) and extract it.
-2. Copy the `PPSA99009` folder to `/data/homebrew/PPSA99009` on the PS5 (close the app first if it is open).
+2. Copy the `PPSA99009` folder to `/data/homebrew/PPSA99009` on the PS5 (close PS5Lichii first).
 3. Put your own `prod.keys` in `/data/lichii/keys/` and your own firmware files in `/data/lichii/firmware/`.
 4. Put each game's file (`.xci`, `.nup` or `.nsp`) in `/data/lichii/roms/`, or in a folder of its own there, then open **Library**.
 

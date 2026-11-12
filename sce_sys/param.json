@@ -25,7 +25,10 @@
   "localizedParameters": {
     "defaultLanguage": "en-US",
     "en-US": {
-      "titleName": "ProsperoEden"
+      "titleName": "PS5Lichii"
+    },
+    "en-GB": {
+      "titleName": "PS5Lichii"
     }
   },
   "masterVersion": "01.00",
